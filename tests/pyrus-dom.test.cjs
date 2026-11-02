@@ -3,6 +3,14 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('Pyrus data cells exclude an unmarked row-number cell and keep sticky data',async()=>{
+ const w=page(tableFixture(['A','B'],[['Первое','Второе']]));
+ const rowEl=w.document.querySelector('tbody tr');
+ rowEl.children[0].classList.add('viewTableCell','formCell_sticky');rowEl.children[0].setAttribute('data-col-idx','0');
+ rowEl.children[1].classList.add('viewTableCell');rowEl.children[1].setAttribute('data-col-idx','1');
+ rowEl.insertAdjacentHTML('afterbegin','<td class="formCell">1</td>');
+ const [source]=await w.pyrusTransfer.captureTables();assert.equal(source.value.columns.length,2);assert.deepEqual([...source.value.rows[0]],['Первое','Второе']);w.close();
+});
 test('unknown table autocomplete is not filled as arbitrary text',async()=>{
  const w=page(tableFixture(['A'],[['']])+row('После','<input>'));
  w.document.querySelector('td').innerHTML='<input aria-autocomplete="list">';

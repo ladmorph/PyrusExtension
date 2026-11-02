@@ -10,7 +10,14 @@
     return row?[...row.querySelectorAll('.headerCell')].map(el=>norm(el.textContent)):[];
   }
   const rows=root=>own(root,'tbody tr.viewTableRow,tbody tr.formRow,tbody tr').filter(el=>visible(el)&&!el.closest('tfoot,thead'));
-  const cells=row=>[...row.children].filter(el=>el.matches('td,[role="cell"],[role="gridcell"]')&&!el.matches('.formCell_sticky,.stickyCell')&&!el.querySelector('.stickyCell__rowSymbol'));
+  const cells=row=>{
+    const direct=[...row.children].filter(el=>el.matches('td,[role="cell"],[role="gridcell"]'));
+    // Pyrus marks data cells explicitly. Row numbers, selection controls and
+    // virtualization spacer cells must not shift the column mapping.
+    const dataCells=direct.filter(el=>el.matches('.viewTableCell,[data-col-idx]'));
+    if(dataCells.length)return dataCells;
+    return direct.filter(el=>!el.matches('.formCell_sticky,.stickyCell,.formCell_centralized')&&!el.querySelector('.stickyCell__rowSymbol'));
+  };
   function read(cell){
     const text=cell.querySelector('.cellString__content');
     if(text)return norm(text.innerText??text.textContent);
@@ -31,7 +38,7 @@
     }catch{return false;}
   }
   async function apply(root,value,setValue){
-    globalThis.pyrusTableStatus={rows:value.rows.length,columns:value.columns.length,rowIndex:null,columnIndex:null,confirmedCells:0};
+    globalThis.pyrusTableStatus={rows:value.rows.length,columns:value.columns.length,sourceRowWidths:value.rows.map(row=>row.length),rowIndex:null,columnIndex:null,confirmedCells:0};
     const map=mapping(value.columns,columns(root));
     if(!value.rows.length)throw Error('table-source-empty');
     if(value.rows.some(row=>row.length!==value.columns.length))throw Error('table-source-incomplete');

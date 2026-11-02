@@ -141,7 +141,7 @@ action('export',async()=>{
  try{const current=await page('structure');if(current.url!==snapshot?.url){targetStructure=current.data;structureStatus='captured';}else{structureStatus='source-is-active';}}catch{structureStatus='capture-failed';}
  await record('export');
  const report={format:'pyrus-transfer-debug',schemaVersion:1,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,browser:navigator.userAgent,source:snapshot?{count:snapshot.fields.length,kinds:snapshot.fields.reduce((a,f)=>(a[f.kind]=(a[f.kind]||0)+1,a),{})}:null,lastPage,lastPlan,events:diagnostics};
- report.sourceTables=(snapshot?.fields||[]).filter(f=>f.kind==='pyrus-table').map((f,index)=>({index,rows:f.value.rows.length,columns:f.value.columns.length,unsupported:f.unsupported}));
+ report.sourceTables=(snapshot?.fields||[]).filter(f=>f.kind==='pyrus-table').map((f,index)=>({index,rows:f.value.rows.length,columns:f.value.columns.length,rowWidths:f.value.rows.map(row=>row.length),unsupported:f.unsupported}));
  report.structures={source:snapshot?.sourceStructure||null,target:targetStructure,status:structureStatus,sourceMissing:!snapshot?.sourceStructure};
  report.lastTransferPage=previousPage;
  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
