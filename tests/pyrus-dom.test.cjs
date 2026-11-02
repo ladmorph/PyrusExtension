@@ -3,6 +3,16 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('dedicated table and multi-value structures survive general sample truncation',()=>{
+ const w=page('<input>'.repeat(160)+'<div class="viewTableFieldNew"><button>PRIVATE_ADD</button><table><tbody><tr><td class="formCell"><div class="cellString__content" contenteditable="true">PRIVATE_CELL</div></td></tr></tbody></table></div><div class="horizontalMultiInput"><div class="tokens"><span class="selectedToken">PRIVATE_CHOICE</span></div><input value="PRIVATE_QUERY"></div>');
+ w.eval(code('structure.js'));const report=w.pyrusStructure();
+ assert.equal(report.main.truncated,true);
+ assert.equal(report.main.components.tables.items.length,1);
+ assert.equal(report.main.components.multiValue.items.length,1);
+ const json=JSON.stringify(report.main.components);
+ assert.ok(json.includes('cellString__content'));assert.ok(json.includes('selectedToken'));assert.ok(!json.includes('PRIVATE_'));
+ assert.ok(report.main.components.tables.items.every(item=>!item.truncated));w.close();
+});
 test('missing catalog does not block information system or its dependent field',async()=>{
  const w=page(row('Информационная система','<div class="formFieldCatalog__content"><input role="combobox" aria-owns="systems"></div>')+'<table id="systems"><tbody><tr><td>Система А</td></tr></tbody></table>');
  const input=w.document.querySelector('input');

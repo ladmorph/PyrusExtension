@@ -25,7 +25,25 @@
       const popup=all.filter(el=>['listbox','option','row'].includes(el.getAttribute('role')) || el.matches?.('.inputCompletion__popup,.completionTableMenuItem,.completionMenuItem'));
       const tableNodes=[...doc.querySelectorAll('table,thead,tbody,tr,th,td,.formCell,[role="grid"],[role="gridcell"],[role="cell"]')];
       const seeds=[...new Set([...popup,...panelNodes,...tableNodes.slice(0,60),...all])];
-      return {total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
+      // Dedicated component trees cannot be displaced by unrelated page controls.
+      // Read structural metadata only, including selected-token wrappers and cell editors.
+      function components(selector) {
+        const roots=[...doc.querySelectorAll(selector)];
+        return {total:roots.length,truncated:roots.length>30,items:roots.slice(0,30).map((root,index)=>{
+          let remaining=1200,truncated=false;
+          function walk(el,depth){
+            if(remaining--<=0){truncated=true;return null;}
+            const node=describe(el);
+            if(depth>=16 && el.children.length){truncated=true;return {...node,children:[]};}
+            const children=[];
+            for(const child of el.children){if(remaining<=0){truncated=true;break;}children.push(walk(child,depth+1));}
+            return {...node,children};
+          }
+          const tree=walk(root,0);
+          return {index,truncated,tree};
+        })};
+      }
+      return {components:{tables:components('.viewTableFieldNew'),multiValue:components('.horizontalMultiInput')},total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
         const ancestors=[];let parent=el.parentElement;
         for(let i=0;parent&&i<7;i++,parent=parent.parentElement)ancestors.push(describe(parent));
         const ids=(el.getAttribute('aria-controls')||'').split(/\s+/).filter(Boolean);
