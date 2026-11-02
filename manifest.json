@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pyrus — перенос полей",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "Перенос полей между задачами одного шаблона в один шаг на черновике.",
   "permissions": [
     "activeTab",

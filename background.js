@@ -3,14 +3,16 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
  if(sender.id!==chrome.runtime.id || !sender.tab || !['pyrus-transfer-finished','pyrus-transfer-failed'].includes(message?.type))return;
  (async()=>{
   const saved=await chrome.storage.session.get('diagnostics');
-  const diagnostics=saved.diagnostics||[],time=new Date().toISOString();
+  const diagnostics=(saved.diagnostics||[]).slice(-28),time=new Date().toISOString();
   if(message.type==='pyrus-transfer-finished'){
    diagnostics.push({time,action:'apply',details:{page:message.diagnostic}});
    diagnostics.push({time,action:'transfer',details:{requested:message.results.length,results:message.results}});
-   await chrome.storage.session.set({diagnostics:diagnostics.slice(-100),lastPage:message.diagnostic});
+   while(diagnostics.length>2 && JSON.stringify(diagnostics).length>150000)diagnostics.shift();
+   await chrome.storage.session.set({diagnostics,lastPage:message.diagnostic});
   }else{
    diagnostics.push({time,action:'error',details:{operation:'apply',category:message.category}});
-   await chrome.storage.session.set({diagnostics:diagnostics.slice(-100)});
+   while(diagnostics.length>1 && JSON.stringify(diagnostics).length>150000)diagnostics.shift();
+   await chrome.storage.session.set({diagnostics});
   }
  })().then(()=>respond({ok:true}),()=>respond({ok:false}));
  return true;

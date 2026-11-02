@@ -7,7 +7,8 @@ function logView(){
  $('debugLog').textContent=diagnostics.map(e=>new Date(e.time).toLocaleTimeString('ru-RU')+' · '+e.action+' · '+JSON.stringify(e.details)).join('\n') || 'Событий пока нет';
 }
 async function record(action,details={}){
- diagnostics.push({time:new Date().toISOString(),action,details});diagnostics=diagnostics.slice(-100);
+ diagnostics.push({time:new Date().toISOString(),action,details});diagnostics=diagnostics.slice(-30);
+ while(diagnostics.length>1 && JSON.stringify(diagnostics).length>150000)diagnostics.shift();
  await storage.set({diagnostics});logView();
 }
 async function page(method,args=[],expectedTab){
@@ -30,7 +31,7 @@ async function page(method,args=[],expectedTab){
    const before=m==='apply'?globalThis.pyrusTransfer.diagnose(prepare.sourceFields):null;
    const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
    const data=m==='cellProbeStart'?globalThis.pyrusCellProbe.start():m==='cellProbeStop'?globalThis.pyrusCellProbe.stop():m==='cellProbeCancel'?globalThis.pyrusCellProbe.discard():m==='capture'?await globalThis.pyrusTransfer.captureTables():m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
-   return {url:location.href,data,sourceStructure:m==='capture'?globalThis.pyrusStructure():undefined,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
+   return {url:location.href,data,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
    };
    return m==='apply'?globalThis.pyrusTransferRunner.start(execute):await execute();
  },args:[method,args,{sourceUrl:snapshot?.url || null,targetUrl:previewTab?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
@@ -66,7 +67,7 @@ function action(id,fn){$(id).onclick=async()=>{
 action('capture',async()=>{
  reset();const result=await page('capture');
  if(!result.data.length)throw new Error('В открытых разделах поля не найдены. Включите редактирование. Скачайте отчёт — для этой разметки нужен адаптер.');
- snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data,sourceStructure:result.sourceStructure||null,expandedGroups:result.sourceSections||[]};await storage.set({snapshot});await loadSource();
+ snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data,expandedGroups:result.sourceSections||[]};await storage.set({snapshot});await loadSource();
  status('Поля сохранены. Перейдите в другую задачу того же шаблона.');
 });
 
@@ -187,4 +188,14 @@ action('export',async()=>{
  status('Компактный отчёт скачан: последняя попытка, ошибки и локальный контекст. Полная структура доступна отдельной кнопкой.');
 });
 action('clearLogs',async()=>{diagnostics=[];lastPage=null;lastPlan=null;lastStructure=null;await storage.remove(['diagnostics','lastPage','lastPlan']);logView();status('Диагностика очищена.');});
-(async()=>{const saved=await storage.get(['diagnostics','lastPage','lastPlan']);diagnostics=saved.diagnostics||[];lastPage=saved.lastPage||null;lastPlan=saved.lastPlan||null;logView();await loadSource();reset();})().catch(e=>status(e.message,true));
+(async()=>{
+ // Migrate old snapshots before any write: a full DOM tree can exhaust session quota.
+ const previous=(await storage.get('snapshot')).snapshot;
+ if(previous && Object.hasOwn(previous,'sourceStructure')){
+  delete previous.sourceStructure;
+  await storage.remove(['diagnostics','lastPage','lastPlan']);
+  await storage.set({snapshot:previous});
+ }
+ const old=(await storage.get('diagnostics')).diagnostics||[];
+ if(JSON.stringify(old).length>150000)await storage.remove(['diagnostics','lastPage','lastPlan']);
+ const saved=await storage.get(['diagnostics','lastPage','lastPlan']);diagnostics=saved.diagnostics||[];lastPage=saved.lastPage||null;lastPlan=saved.lastPlan||null;logView();await loadSource();reset();})().catch(e=>status(e.message,true));

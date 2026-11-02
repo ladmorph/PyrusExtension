@@ -253,7 +253,8 @@
           const titles=[...(document.querySelectorAll('.formFieldBaseWrapper__titleWrapper') || [])].filter(el=>normalize(el.querySelector?.('.formFieldTitle__textValue')?.textContent || el.textContent)===normalize(s.label));
           return {sourceIndex:index,kind:s.kind,labelLength:normalize(s.label).length,groupDepth:(s.groups||[]).length,hasFieldId:Boolean(s.fieldId),sourceEmpty:s.value==='' || s.value==null,
             titleNodes:titles.length,hiddenTitleNodes:titles.filter(el=>!visible(el)).length,
-            candidates:matches.slice(0,20).map(({f,targetIndex})=>({targetIndex,kind:f.kind,groupDepth:f.groups.length,compatible:compatible(s,f),sameKey:f.key===s.key,sameValue:JSON.stringify(f.value)===JSON.stringify(s.value),sameGroupPath:JSON.stringify(f.groups)===JSON.stringify(s.groups||[]),hasFieldId:Boolean(f.fieldId)}))};
+            targetControls:titles.slice(0,3).flatMap(title=>[...(title.closest(rowSelector)?.querySelectorAll('input,textarea,select,[contenteditable],.formFieldSimpleView')||[])].slice(0,8).map(el=>({tag:el.tagName,visible:visible(el),disabled:Boolean(el.disabled),readOnly:Boolean(el.readOnly),editable:el.getAttribute('contenteditable'),classes:[...(el.classList||[])].slice(0,5)}))),
+            candidates:matches.slice(0,20).map(({f,targetIndex})=>({targetIndex,kind:f.kind,groupDepth:f.groups.length,compatible:compatible(s,f),sameKey:f.key===s.key,sameValue:JSON.stringify(f.value)===JSON.stringify(s.value),textComparison:typeof f.value==='string'&&typeof s.value==='string'?{sourceLength:s.value.length,targetLength:f.value.length,sourceLines:s.value.split(/\r?\n/).length,targetLines:f.value.split(/\r?\n/).length,sameNormalizedWhitespace:valueText(s.value)===valueText(f.value)}:null,sameGroupPath:JSON.stringify(f.groups)===JSON.stringify(s.groups||[]),hasFieldId:Boolean(f.fieldId)}))};
         }),
         frames: document.querySelectorAll('iframe').length,
         truncated: nodes.length > 200,
