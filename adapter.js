@@ -113,7 +113,8 @@
     target.click();
   }
   async function choose(field,value) {
-    const el=field.el,previous=el.value;
+    let el=field.el;
+    const previous=el.value;
     const tableChoice=el.matches('.cellRadioButton__input');
     const popupSelector=tableChoice?'.cellRadioButton__popuper':'.inputCompletion__popup';
     globalThis.pyrusPickerStatus={outcome:'opening',kind:field.kind,tableChoice};
@@ -126,9 +127,30 @@
     if(field.kind!=='pyrus-multi-choice' && valueText(previous)===valueText(value)){globalThis.pyrusPickerStatus={outcome:'already-matched',kind:field.kind};return;}
     let panelCount=0,optionCount=0;
     const existingPopups=new Set([...document.querySelectorAll(popupSelector)].filter(visible));
-    el.focus();
-    const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
-    if(icon)icon.click();else if(tableChoice)activateOption(el,value,false);else el.click();
+    const opening={tableChoice,refreshed:0};
+    globalThis.pyrusPickerStatus.opening=opening;
+    const refresh=()=>{const current=field.resolve?.();if(current&&current!==el){el=current;opening.refreshed++;}};
+    if(tableChoice){
+      // Follow browser event order, and reacquire the editor when React replaces it.
+      el.closest('.formCell')?.querySelector('.cellField__focusTarget')?.focus();
+      await delay(50);refresh();
+      for(const type of ['pointerdown','mousedown','focus','pointerup','mouseup','click']){
+        refresh();
+        if(!el.isConnected)throw new Error('table-editor-detached');
+        if(type==='focus')el.focus();
+        else{
+          const rect=el.getBoundingClientRect();
+          const init={bubbles:true,cancelable:true,button:0,buttons:type.endsWith('down')?1:0,clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,pointerType:'mouse',pointerId:1,isPrimary:true};
+          el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,init):new MouseEvent(type,init));
+        }
+        await delay(20);
+      }
+      refresh();
+    }else{
+      el.focus();
+      const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
+      if(icon)icon.click();else el.click();
+    }
     // Table choice input displays the selected label; it is not a search editor.
     if(!tableChoice)writeNative(el,value);
     try {
@@ -136,6 +158,7 @@
       for(let attempt=0;attempt<(field.kind==='pyrus-catalog'?40:20);attempt++) {
         if(field.kind==='pyrus-catalog' && attempt>0 && attempt%10===0 && searchQueries[attempt/10])writeNative(el,searchQueries[attempt/10]);
         await delay(150);
+        if(tableChoice)refresh();
         const ids=[...(el.getAttribute('aria-owns')||'').split(/\s+/),...(el.getAttribute('aria-controls')||'').split(/\s+/)].filter(Boolean);
         let panels=ids.map(id=>document.getElementById(id)).filter(p=>p&&visible(p));
         if(!panels.length){
@@ -145,7 +168,7 @@
             if(opened.length===1)popups=opened;
           }
           if(popups.length>1)throw new Error('choice-popup-ambiguous');
-          if(popups.length===1 && (document.activeElement===el || el.getAttribute('aria-expanded')==='true'))panels=popups;
+          if(popups.length===1 && (document.activeElement===el || el.getAttribute('aria-expanded')==='true' || tableChoice&&!existingPopups.has(popups[0])))panels=popups;
           else if(!popups.length){const lists=[...document.querySelectorAll('[role="listbox"]')].filter(visible);if(lists.length===1)panels=lists;}
         }
         panelCount=panels.length;
@@ -161,7 +184,7 @@
       throw new Error('choice-option-not-found');
     }catch(e){
       const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'picker-error';
-      globalThis.pyrusPickerStatus={outcome:reason,kind:field.kind,panelCount,optionCount};
+      globalThis.pyrusPickerStatus={outcome:reason,kind:field.kind,panelCount,optionCount,opening,inputConnected:el.isConnected,visiblePopupCount:[...document.querySelectorAll(popupSelector)].filter(visible).length};
       if(globalThis.pyrusStructure)try{globalThis.pyrusPickerFailureStructure=globalThis.pyrusStructure();}catch{}
       if(!tableChoice)writeNative(el,previous);closePicker();throw e;
     }

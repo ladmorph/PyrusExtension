@@ -3,6 +3,14 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('table opener rebinds the input replaced during focus and uses mouse-down buttons',async()=>{
+ const w=page(tableFixture(['Выбор'],[['']]));const cell=w.document.querySelector('td');cell.innerHTML='<input class="cellField__focusTarget"><input class="cellRadioButton__input">';
+ let opened=0;const old=cell.querySelector('.cellRadioButton__input');
+ old.onfocus=()=>{const fresh=old.cloneNode();old.replaceWith(fresh);fresh.onclick=()=>{opened++;w.document.body.insertAdjacentHTML('beforeend','<div class="cellRadioButton__popuper"><button class="dropdownList__control"><span class="dropdownList__itemText">Вариант</span></button></div>');w.document.querySelector('.dropdownList__itemText').onclick=()=>{fresh.value='Вариант';};};};
+ let down=false;old.onmousedown=e=>{down=e.buttons===1;};
+ const [source]=w.pyrusTransfer.capture();source.value.rows=[['Вариант']];const [result]=await w.pyrusTransfer.apply([source],[source.key],true);
+ assert.equal(result.status,'dispatched');assert.equal(opened,1);assert.equal(down,true);w.close();
+});
 test('recorded table dropdown markup selects the exact text span without ARIA roles',async()=>{
  const w=page(tableFixture(['Протокол'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
  const input=w.document.querySelector('td input');let clicks=0;

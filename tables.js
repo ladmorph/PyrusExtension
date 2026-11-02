@@ -78,7 +78,8 @@
         const kind=el.matches('.cellString__content[contenteditable="true"]')?'pyrus-text':el.matches('.cellRadioButton__input,[role="combobox"]')?'pyrus-choice':el.type==='checkbox'?'checkbox':el.tagName==='SELECT'?'select':el.closest('.cellString__main')&&!el.hasAttribute('aria-autocomplete')?'text':null;
         if(!kind)throw Error('table-editor-unsupported');
         if(el.closest('.horizontalMultiInput')||el.matches('[type="file"],[type="password"]'))throw Error('table-editor-unsupported');
-        try{await setValue({el,kind},valueToWrite);}catch(error){localSnapshot();throw error;}
+        const resolve=()=>cells(rows(root)[r]||{children:[]})[map[c]]?.querySelector('.cellRadioButton__input');
+        try{await setValue({el,kind,resolve},valueToWrite);}catch(error){localSnapshot();throw error;}
         let accepted=false;
         for(let attempt=0;attempt<15;attempt++){const live=cells(rows(root)[r]||{children:[]})[map[c]];if(live&&JSON.stringify(read(live))===JSON.stringify(valueToWrite)){accepted=true;break;}await pause(100);}
         if(!accepted)throw Error('table-cell-not-confirmed');

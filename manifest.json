@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Pyrus — перенос полей",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "description": "Перенос полей между задачами одного шаблона с предварительным просмотром.",
   "permissions": ["activeTab", "scripting", "storage"],
   "action": { "default_popup": "popup.html", "default_title": "Перенос полей Pyrus" },
