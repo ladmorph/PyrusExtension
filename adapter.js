@@ -57,16 +57,28 @@
   const serial = f => { const {el, ...rest} = f; return rest; };
   function plan(source, overwrite) {
     const targets = inventory();
-    const direct=source.map(s=>targets.filter(t=>t.key===s.key));
+    // Index this inventory only; never reuse DOM matches across field writes.
+    const byKey=new Map(),byLabel=new Map(),byFieldId=new Map(),sourceKeyCounts=new Map();
+    const add=(map,key,value)=>{if(!map.has(key))map.set(key,[]);map.get(key).push(value);};
+    for(const t of targets){add(byKey,t.key,t);add(byLabel,normalize(t.label),t);if(t.fieldId)add(byFieldId,t.fieldId,t);}
+    for(const s of source)sourceKeyCounts.set(s.key,(sourceKeyCounts.get(s.key)||0)+1);
+    const direct=source.map(s=>byKey.get(s.key)||[]);
+    const directOwners=new Map();
+    direct.forEach((matches,index)=>{if(matches.length===1)add(directOwners,matches[0],index);});
+    const pools=new Map();
     const pool=(s,index)=>{
-      const byId=s.fieldId?targets.filter(t=>t.fieldId===s.fieldId&&compatible(s,t)):[];
-      const candidates=byId.length?byId:targets.filter(t=>normalize(t.label)===normalize(s.label)&&compatible(s,t)&&!(s.fieldId&&t.fieldId&&s.fieldId!==t.fieldId));
-      return candidates.filter(t=>!direct.some((matches,i)=>i!==index&&matches.length===1&&matches[0]===t));
+      if(pools.has(index))return pools.get(index);
+      const byId=s.fieldId?(byFieldId.get(s.fieldId)||[]).filter(t=>compatible(s,t)):[];
+      const candidates=byId.length?byId:(byLabel.get(normalize(s.label))||[]).filter(t=>compatible(s,t)&&!(s.fieldId&&t.fieldId&&s.fieldId!==t.fieldId));
+      const available=candidates.filter(t=>!(directOwners.get(t)||[]).some(i=>i!==index));
+      pools.set(index,available);return available;
     };
+    const fallbackOwners=new Map();
+    source.forEach((s,index)=>{if(!direct[index].length)for(const t of pool(s,index))add(fallbackOwners,t,index);});
     return source.map((s,index) => {
       const matches=direct[index].length?direct[index]:pool(s,index);
-      const duplicates = source.filter(t => t.key === s.key).length > 1;
-      const shared=matches.length===1&&!direct[index].length&&source.some((other,i)=>i!==index&&!direct[i].length&&pool(other,i).includes(matches[0]));
+      const duplicates = sourceKeyCounts.get(s.key) > 1;
+      const shared=matches.length===1&&!direct[index].length&&(fallbackOwners.get(matches[0])||[]).some(i=>i!==index);
       const ambiguous=duplicates || matches.length>1 || shared;
       const rawTarget=matches.length===1&&!ambiguous?matches[0]:null;
       // Empty and filled states of the same Pyrus picker can have different wrappers.
@@ -82,7 +94,7 @@
       if(s.kind==='pyrus-table'&&!s.value?.rows?.length)reason='Строки таблицы источника не прочитаны или таблица пуста';
       const deferred = !target && !ambiguous && !s.unsupported && s.kind !== 'radio';
       return { key:s.key, label:s.label, value:s.value, reason, deferred, target,
-        matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:targets.filter(t=>normalize(t.label)===normalize(s.label)).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
+        matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:(byLabel.get(normalize(s.label))||[]).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
     });
   }
   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
