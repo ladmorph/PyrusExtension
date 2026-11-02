@@ -21,8 +21,9 @@ async function page(method,args=[],expectedTab){
    if(tab.url===snapshot.url)throw new Error('Открыт источник. Перейдите в целевой черновик — исходная задача не раскрывается.');
    if(new URL(tab.url).origin!==new URL(snapshot.url).origin)throw new Error('Задачи должны быть на одном сервере Pyrus.');
  }
- await chrome.scripting.executeScript({target:{tabId:tab.id},files:['tables.js','adapter.js','expander.js','structure.js','catalog-recorder.js','cell-probe.js']});
+ await chrome.scripting.executeScript({target:{tabId:tab.id},files:['tables.js','adapter.js','expander.js','structure.js','catalog-recorder.js','cell-probe.js','transfer-runner.js']});
  const [response]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(m,a,prepare)=>{
+   const execute=async()=>{
    if(prepare.sourceUrl && ['preview','apply','expand','cellProbeStart'].includes(m) && location.href===prepare.sourceUrl)throw new Error('Открыт источник. Раскрытие отменено.');
    if(m==='apply' && prepare.targetUrl && location.href!==prepare.targetUrl)throw new Error('Страница изменилась. Повторите заполнение черновика.');
    if(m==='apply')globalThis.pyrusCellProbe.discard();
@@ -30,7 +31,10 @@ async function page(method,args=[],expectedTab){
    const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
    const data=m==='cellProbeStart'?globalThis.pyrusCellProbe.start():m==='cellProbeStop'?globalThis.pyrusCellProbe.stop():m==='cellProbeCancel'?globalThis.pyrusCellProbe.discard():m==='capture'?await globalThis.pyrusTransfer.captureTables():m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
    return {url:location.href,data,sourceStructure:m==='capture'?globalThis.pyrusStructure():undefined,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
+   };
+   return m==='apply'?globalThis.pyrusTransferRunner.start(execute):await execute();
  },args:[method,args,{sourceUrl:snapshot?.url || null,targetUrl:previewTab?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
+ if(response?.result?.queued){window.close();return {queued:true};}
  if(!response?.result)throw new Error('Нет ответа от страницы. Обновите вкладку.');
  lastPage=response.result.diagnostic;await storage.set({lastPage});await record(method,{page:lastPage});
  return {...response.result,tabId:tab.id};
@@ -74,6 +78,7 @@ action('fillAll',async()=>{
  if(!target.diagnostic.recognized)throw new Error('В черновике не распознаны поля. Скачайте отчёт диагностики.');
  previewTab={id:target.tabId,url:target.url};
  const result=await page('apply',[snapshot.fields,keys,$('overwrite').checked,snapshot.expandedGroups||[]],target.tabId);
+ if(result.queued)return;
  await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,table:r.table,matching:r.matching||null}))});
  const ok=result.data.filter(r=>r.status==='dispatched').length;
  const rest=result.data.filter(r=>r.status!=='dispatched');reset();
@@ -120,6 +125,7 @@ action('apply',async()=>{
  const current=await page('preview',[snapshot.fields,$('overwrite').checked],previewTab.id);
  if(current.url!==previewTab.url)throw new Error('Страница изменилась. Повторите сопоставление.');
  const result=await page('apply',[snapshot.fields,keys,$('overwrite').checked,snapshot.expandedGroups||[]],previewTab.id);
+ if(result.queued)return;
  await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,table:r.table,matching:r.matching||null}))});
  reset();status(result.data.map(r=>r.label+': '+r.message).join('\n'));
 });

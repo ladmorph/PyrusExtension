@@ -47,6 +47,41 @@ test('popup diagnostics survives reopen and exports a report without page data',
   assert.deepEqual(calls.map(args=>args[0]),['preview','apply']);
   assert.equal(calls[1][1][1][0],'label:SECRET_NAME:text');
   assert.match(elements.status.textContent,/Готово: 1/);
+  let closed=false;context.window={close(){closed=true;}};
+  context.chrome.scripting.executeScript=async opts=>opts.files?[]:[{result:opts.args[0]==='apply'?{queued:true}:{url:'https://secret.example/task/other',data:[],diagnostic:{recognized:1}}}];
+  // Recreate the popup context so window.close is available.
+  await vm.runInContext(code,vm.createContext({...context}));
+  await elements.fillAll.onclick();
+  assert.equal(closed,true);
   await elements.clearLogs.onclick();
   assert.equal(saved.diagnostics,undefined);
+});
+
+test('page transfer waits for page focus and persists completion independently of popup',async()=>{
+ const {JSDOM}=require('jsdom');
+ const dom=new JSDOM('<body></body>',{runScripts:'outside-only'}),w=dom.window;
+ let focused=false,called=0;const messages=[];
+ w.document.hasFocus=()=>focused;
+ w.chrome={runtime:{sendMessage:async m=>{messages.push(m);return {ok:true};}}};
+ w.eval(fs.readFileSync(__dirname+'/transfer-runner.js','utf8'));
+ const pending=w.pyrusTransferRunner.start(async()=>{called++;return {data:[{status:'dispatched',sourceIndex:0}],diagnostic:{recognized:1}};});
+ assert.equal(pending.queued,true);
+ assert.throws(()=>w.pyrusTransferRunner.start(async()=>{}),/уже выполняется/);
+ await new Promise(r=>setTimeout(r,150));assert.equal(called,0);
+ focused=true;
+ await new Promise(r=>setTimeout(r,180));assert.equal(called,1);
+ assert.equal(messages[0].type,'pyrus-transfer-finished');
+ assert.equal(messages[0].results[0].status,'dispatched');
+ assert.match(w.document.body.textContent,/Готово: 1/);w.close();
+});
+
+test('background persists diagnostics after popup closure and ignores external senders',async()=>{
+ let listener;const saved={diagnostics:[{action:'transfer-start'}]};
+ const context={chrome:{runtime:{id:'test',onMessage:{addListener(fn){listener=fn;}}},storage:{session:{get:async()=>saved,set:async data=>Object.assign(saved,data)}}}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),context);
+ const message={type:'pyrus-transfer-finished',diagnostic:{recognized:2},results:[{status:'dispatched'}]};
+ assert.equal(listener(message,{id:'other',tab:{id:1}},()=>{}),undefined);
+ await new Promise(resolve=>listener(message,{id:'test',tab:{id:1}},resolve));
+ assert.equal(saved.lastPage.recognized,2);
+ assert.deepEqual(saved.diagnostics.map(e=>e.action),['transfer-start','apply','transfer']);
 });
