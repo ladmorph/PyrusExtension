@@ -38,7 +38,7 @@
       function needed(el){
         if(!selective)return true;
         if(allowed.includes(titleText(el)))return true;
-        const scope=el.closest('.formFieldGroup,details') || el.closest('.formFieldBaseWrapper,.formField');
+        const scope=el.closest('.viewTableFieldNew') || el.closest('.formFieldGroup,details') || el.closest('.formFieldBaseWrapper,.formField');
         if(!scope)return false;
         // A hidden child may already exist in the DOM. Open its ancestors without
         // opening unrelated siblings, even if the source had no group metadata.

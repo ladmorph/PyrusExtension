@@ -21,12 +21,12 @@ async function page(method,args=[],expectedTab){
    if(tab.url===snapshot.url)throw new Error('Открыт источник. Перейдите в целевой черновик — исходная задача не раскрывается.');
    if(new URL(tab.url).origin!==new URL(snapshot.url).origin)throw new Error('Задачи должны быть на одном сервере Pyrus.');
  }
- await chrome.scripting.executeScript({target:{tabId:tab.id},files:['adapter.js','expander.js','structure.js','catalog-recorder.js']});
+ await chrome.scripting.executeScript({target:{tabId:tab.id},files:['tables.js','adapter.js','expander.js','structure.js','catalog-recorder.js']});
  const [response]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(m,a,prepare)=>{
    if(prepare.sourceUrl && ['preview','apply','expand'].includes(m) && location.href===prepare.sourceUrl)throw new Error('Открыт источник. Раскрытие отменено.');
    const before=m==='apply'?globalThis.pyrusTransfer.diagnose(prepare.sourceFields):null;
    const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
-   const data=m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
+   const data=m==='capture'?await globalThis.pyrusTransfer.captureTables():m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
    return {url:location.href,data,sourceStructure:m==='capture'?globalThis.pyrusStructure():undefined,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
  },args:[method,args,{sourceUrl:snapshot?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
  if(!response?.result)throw new Error('Нет ответа от страницы. Обновите вкладку.');
@@ -141,6 +141,7 @@ action('export',async()=>{
  try{const current=await page('structure');if(current.url!==snapshot?.url){targetStructure=current.data;structureStatus='captured';}else{structureStatus='source-is-active';}}catch{structureStatus='capture-failed';}
  await record('export');
  const report={format:'pyrus-transfer-debug',schemaVersion:1,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,browser:navigator.userAgent,source:snapshot?{count:snapshot.fields.length,kinds:snapshot.fields.reduce((a,f)=>(a[f.kind]=(a[f.kind]||0)+1,a),{})}:null,lastPage,lastPlan,events:diagnostics};
+ report.sourceTables=(snapshot?.fields||[]).filter(f=>f.kind==='pyrus-table').map((f,index)=>({index,rows:f.value.rows.length,columns:f.value.columns.length,unsupported:f.unsupported}));
  report.structures={source:snapshot?.sourceStructure||null,target:targetStructure,status:structureStatus,sourceMissing:!snapshot?.sourceStructure};
  report.lastTransferPage=previousPage;
  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));

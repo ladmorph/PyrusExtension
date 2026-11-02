@@ -3,6 +3,37 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+const tableFixture=(columns,rows=[])=>'<div class="viewTableFieldNew"><div class="formFieldBaseWrapper"><div class="viewTableFieldNew__title">Тестовая таблица</div><table><thead><tr>'+columns.map(c=>'<th class="headerCell">'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.map(values=>'<tr class="viewTableRow">'+values.map(v=>'<td class="formCell"><div class="cellString__content" contenteditable="true">'+v+'</div></td>').join('')+'</tr>').join('')+'</tbody></table><button class="addRowButton">+</button></div></div>';
+test('table choice uses real option selection and confirms the cell',async()=>{
+ const w=page(tableFixture(['Действие'],[['']])+'<div id="table-options" role="listbox"><div role="option">Добавить</div></div>');
+ w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input" aria-controls="table-options">';
+ const input=w.document.querySelector('td input');let clicks=0;
+ w.document.querySelector('[role=option]').onclick=()=>{clicks++;input.value='Добавить';};
+ const [source]=w.pyrusTransfer.capture();source.value.rows=[['Добавить']];
+ const [result]=await w.pyrusTransfer.apply([source],[source.key],true);
+ assert.equal(result.status,'dispatched');assert.equal(clicks,1);w.close();
+});
+test('generic table maps reordered columns, adds rows and preserves later scalar fields',async()=>{
+ const src=page(tableFixture(['Колонка Б','Колонка А'],[['Б1','А1'],['Б2','А2']])+row('После','<input value="Готово">'));
+ const source=await src.pyrusTransfer.captureTables();assert.equal(source[0].kind,'pyrus-table');src.close();
+ const w=page(tableFixture(['Колонка А','Колонка Б'])+row('После','<input>'));let added=0;
+ w.document.querySelector('.addRowButton').onclick=()=>{added++;w.document.querySelector('tbody').insertAdjacentHTML('beforeend','<tr class="viewTableRow"><td class="formCell"><div class="cellString__content" contenteditable="true"></div></td><td class="formCell"><div class="cellString__content" contenteditable="true"></div></td></tr>');};
+ const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+ assert.ok(results.every(r=>r.status==='dispatched'),JSON.stringify(results));assert.equal(added,2);
+ assert.deepEqual([...w.document.querySelectorAll('td')].map(el=>el.textContent),['А1','Б1','А2','Б2']);assert.equal(w.document.querySelector('input').value,'Готово');w.close();
+});
+test('table failure never blocks subsequent scalar fields',async()=>{
+ const src=page(tableFixture(['A'],[['Запись']])+row('После','<input value="Готово">'));const source=await src.pyrusTransfer.captureTables();src.close();
+ const w=page(tableFixture(['Другая колонка'])+row('После','<input>'));
+ const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
+ assert.equal(results[0].reason,'table-columns-missing');assert.equal(results[1].status,'dispatched');assert.equal(w.document.querySelector('input').value,'Готово');w.close();
+});
+test('capture materializes a source table without clicks and restores scroll position',async()=>{
+ const w=page(tableFixture(['A']));const root=w.document.querySelector('.viewTableFieldNew');let clicked=0;
+ root.onclick=()=>clicked++;Object.defineProperty(w.document,'scrollingElement',{value:w.document.documentElement});w.document.documentElement.scrollTop=0;
+ root.scrollIntoView=()=>{w.document.documentElement.scrollTop=300;root.querySelector('tbody').innerHTML='<tr class="viewTableRow"><td class="formCell">Исходная строка</td></tr>';};
+ const [source]=await w.pyrusTransfer.captureTables();assert.equal(source.value.rows[0][0],'Исходная строка');assert.equal(clicked,0);assert.equal(w.document.documentElement.scrollTop,0);w.close();
+});
 test('new picker is distinguished from a stale portal and dismissed after selection',async()=>{
  const w=page(row('Выбор','<input role="combobox">')+'<div class="inputCompletion__popup" id="stale"><div role="option">Нужное</div></div>');
  const input=w.document.querySelector('input');let staleClicks=0,escapes=0;
@@ -95,7 +126,7 @@ function page(html){
  const dom=new JSDOM(html,{runScripts:'outside-only',pretendToBeVisual:true,url:'https://pyrus.test/task/1'});const w=dom.window;
  w.HTMLElement.prototype.getClientRects=function(){for(let el=this;el;el=el.parentElement)if(el.style.display==='none')return [];return [{}];};
  const timer=w.setTimeout.bind(w);w.setTimeout=(fn,ms)=>timer(fn,Math.min(ms,3));
- w.eval(code('expander.js'));w.eval(code('adapter.js'));return w;
+ w.eval(code('tables.js'));w.eval(code('expander.js'));w.eval(code('adapter.js'));return w;
 }
 test('Pyrus captures titled text, date and checkbox, excludes clipboard/search/comments',async()=>{
  const w=page(row('Описание','<div contenteditable="true" class="multiLineInputContent">Пример</div><div class="copyToClipboard"><textarea>ignore</textarea></div>')+row('Дата','<input class="formFieldDateInput__input" value="03.11.2026">')+row('Доступ','<div class="checkbox"><input class="checkbox__hiddenInput" type="checkbox" checked></div>')+'<input aria-label="Поиск" value="ignore"><div class="CommentSection"><div contenteditable="true">ignore</div></div>');

@@ -18,7 +18,7 @@
   function inventory() {
     const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
     const pyrusPage=Boolean(document.querySelector?.('.formFieldBaseWrapper'));
-    return nodes.filter(el => !el.closest('[role="dialog"]') &&
+    const fields=nodes.filter(el => !el.closest('[role="dialog"]') &&
       !el.closest('.copyToClipboard,.viewTableSearch,.formCell,.CommentSection,nav,[role="search"]') &&
       (!pyrusPage || el.closest('.formFieldBaseWrapper')) &&
       !['hidden','password','file','submit','button','reset','search'].includes(el.type) &&
@@ -45,6 +45,12 @@
       const key = id ? `field:${id}:${kind}` : label ? `label:${path ? path+' / ' : ''}${label}:${kind}` : '';
       return { el, key, groups, fieldId:id, label: label || (id ? `Поле ${id}` : 'Без названия'), kind, value, unsupported: Boolean(unsupported), radioValue: kind === 'radio' ? el.value : null };
     }).filter(f => f.key).map(f => ({...f, key: f.kind === 'radio' ? `${f.key}:${f.radioValue}` : f.key}));
+    for(const root of globalThis.pyrusTables?.roots()||[]){
+      const title=root.querySelector('.viewTableFieldNew__title .formFieldTitle__textValue,.viewTableFieldNew__title,.formFieldBaseWrapper__titleWrapper');
+      const label=normalize(title?.textContent),groups=groupPath(root),value=globalThis.pyrusTables.data(root);
+      if(label)fields.push({el:root,key:`table:${groups.join(' / ')} / ${label}`,label,groups,fieldId:'',kind:'pyrus-table',value,unsupported:!value.columns.length,radioValue:null});
+    }
+    return globalThis.pyrusTables?fields.sort((a,b)=>a.el===b.el?0:a.el.compareDocumentPosition(b.el)&2?1:-1):fields;
   }
   const serial = f => { const {el, ...rest} = f; return rest; };
   function plan(source, overwrite) {
@@ -63,7 +69,7 @@
       const rawTarget=matches.length===1&&!ambiguous?matches[0]:null;
       // Empty and filled states of the same Pyrus picker can have different wrappers.
       const target=rawTarget && isPicker(s.kind)&&isPicker(rawTarget.kind)&&s.kind!=='pyrus-choice'?{...rawTarget,kind:s.kind}:rawTarget;
-      const filled = target && (Array.isArray(target.value) ? target.value.length > 0 : target.value !== '' && target.value !== false);
+      const filled = target && (target.kind==='pyrus-table'?target.value.rows.length>0:Array.isArray(target.value) ? target.value.length > 0 : target.value !== '' && target.value !== false);
       let reason = ambiguous ? 'Неоднозначное совпадение' : !target ? 'Поле не найдено после раскрытия — скачайте отчёт' : s.unsupported || target.unsupported ? 'Нестандартное поле: требуется адаптер' : target.kind === 'radio' ? 'Радиогруппа: требуется адаптер' : filled && !overwrite && JSON.stringify(target.value)!==JSON.stringify(s.value) ? 'В целевой задаче уже заполнено' : '';
       if (!reason && ['select','multi-select'].includes(target.kind)) {
         const values = Array.isArray(s.value) ? s.value : [s.value];
@@ -71,6 +77,7 @@
       }
       if(!reason && isPicker(target.kind) && s.value==='' && target.value!=='')reason='Очистка списка Pyrus пока не поддерживается';
       if(!reason && target.kind==='pyrus-multi-choice' && (!Array.isArray(s.value) || target.value.some(v=>!s.value.includes(v))))reason='В целевом множественном поле есть лишние варианты: автоматическое удаление пока не поддерживается';
+      if(s.kind==='pyrus-table'&&!s.value?.rows?.length)reason='Строки таблицы источника не прочитаны или таблица пуста';
       const deferred = !target && !ambiguous && !s.unsupported && s.kind !== 'radio';
       return { key:s.key, label:s.label, value:s.value, reason, deferred, target,
         matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:targets.filter(t=>normalize(t.label)===normalize(s.label)).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
@@ -157,6 +164,7 @@
   }
   async function setValue(field, value) {
     const el = field.el;
+    if(field.kind==='pyrus-table'){await globalThis.pyrusTables.apply(el,value,setValue);return;}
     if(field.kind==='pyrus-multi-choice'){
       const container=el.closest('.horizontalMultiInput');
       for(const item of value){
@@ -206,6 +214,7 @@
         unsupported: recognized.filter(f => f.unsupported).length,
         ambiguousControls: duplicates, kinds,
         picker:globalThis.pyrusPickerStatus || null,
+        table:globalThis.pyrusTableStatus || null,
         comparison: source.slice(0,200).map((s,index)=>{
           const matches=recognized.map((f,targetIndex)=>({f,targetIndex})).filter(({f})=>normalize(f.label)===normalize(s.label));
           const titles=[...(document.querySelectorAll('.formFieldBaseWrapper__titleWrapper') || [])].filter(el=>normalize(el.querySelector?.('.formFieldTitle__textValue')?.textContent || el.textContent)===normalize(s.label));
@@ -228,6 +237,12 @@
       };
     },
     capture: () => inventory().map(serial),
+    captureTables: async () => {
+      const baseline=inventory();
+      const tables=await globalThis.pyrusTables.prepareCapture();
+      // Keep the source order and the data read while each table was rendered.
+      return baseline.map(f=>serial(f.kind==='pyrus-table'&&tables.has(f.el)?{...f,value:tables.get(f.el),unsupported:!tables.get(f.el).columns.length}:f));
+    },
     preview: (source, overwrite) => plan(source, overwrite).map(({target,...r}) => r),
     apply: async (source, keys, overwrite, expandedGroups=[]) => {
       const result = [];
@@ -286,11 +301,11 @@
           await waitForUpdate(p.target.kind==='pyrus-catalog');
           if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
           const resolved=plan(source,true).find(f=>f.key===key);
-          const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && JSON.stringify(resolved.target.value)===JSON.stringify(p.value));
+          const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && (p.target.kind==='pyrus-table'?globalThis.pyrusTables.verify(resolved.target.el,p.value):JSON.stringify(resolved.target.value)===JSON.stringify(p.value)));
           if(!accepted && isPicker(p.target.kind))blocked=true;
           result.push({label:p.label,status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
         }
-        catch (e) { if(isPicker(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
+        catch (e) { if(p.target.kind==='pyrus-table'){const reason=/^table-(columns-ambiguous|columns-missing|source-empty|source-incomplete|extra-target-rows|add-row-ambiguous|row-not-added|cell-missing|editor-unsupported|cell-not-confirmed|not-confirmed)$/.test(e.message)?e.message:'table-write-failed';result.push({label:p.label,status:'error',reason,message:'Таблица заполнена не полностью: '+reason+'. Остальные поля продолжают заполняться.'});continue;} if(isPicker(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
       }
       const finalPlan=plan(source,true);
       return result.map((entry,index)=>({...entry,sourceIndex:source.findIndex(f=>f.key===ordered[index]),matching:finalPlan.find(f=>f.key===ordered[index])?.matching||null}));
