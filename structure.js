@@ -1,6 +1,6 @@
 (() => {
   // Read DOM structure only. Never read textContent, innerHTML, values, IDs or URLs.
-  const tags=new Set(['DIV','SPAN','INPUT','TEXTAREA','SELECT','OPTION','LABEL','BUTTON','A','FORM','SECTION','MAIN','ARTICLE','TABLE','TBODY','TR','TD','TH','DETAILS','SUMMARY','IFRAME','UL','LI','SVG','PATH','HEADER','NAV','FOOTER','BODY']);
+  const tags=new Set(['DIV','SPAN','INPUT','TEXTAREA','SELECT','OPTION','LABEL','BUTTON','A','FORM','SECTION','MAIN','ARTICLE','TABLE','THEAD','TFOOT','TBODY','TR','TD','TH','DETAILS','SUMMARY','IFRAME','UL','LI','SVG','PATH','HEADER','NAV','FOOTER','BODY','CANVAS']);
   const roles=new Set(['button','combobox','textbox','checkbox','radio','region','group','listbox','option','menu','navigation','dialog','tab','tabpanel','switch','row','cell','gridcell','grid','table']);
   globalThis.pyrusStructure = () => {
     let next=0;
@@ -34,7 +34,7 @@
           function walk(el,depth){
             if(remaining--<=0){truncated=true;return null;}
             const node=describe(el);
-            if(depth>=16 && el.children.length){truncated=true;return {...node,children:[]};}
+            if(depth>=40 && el.children.length){truncated=true;return {...node,children:[]};}
             const children=[];
             for(const child of el.children){if(remaining<=0){truncated=true;break;}children.push(walk(child,depth+1));}
             return {...node,children};
@@ -43,7 +43,19 @@
           return {index,truncated,tree};
         })};
       }
-      return {components:{tables:components('.viewTableFieldNew'),multiValue:components('.horizontalMultiInput')},total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
+      // Scan the entire document, not just known editable-table wrappers. Read-only
+      // tables may use different containers or render their rows in sibling layers.
+      const globalCandidates=[...doc.querySelectorAll('table,thead,tbody,tfoot,tr,td,th,canvas,[role="table"],[role="grid"],[role="row"],[role="cell"],[role="gridcell"],[class]')].filter(el=>
+        /^(TABLE|THEAD|TBODY|TFOOT|TR|TD|TH|CANVAS)$/.test(el.tagName) || ['table','grid','row','cell','gridcell'].includes(el.getAttribute('role')) || [...el.classList].some(c=>/[Tt]able|[Gg]rid|[Cc]ell|(?:^|__)row|Row/.test(c)));
+      const priority=el=>/^(TD|TH)$/.test(el.tagName)||['cell','gridcell'].includes(el.getAttribute('role'))?0:el.tagName==='TR'||el.getAttribute('role')==='row'?1:2;
+      const selected=globalCandidates.map((el,index)=>({el,index})).sort((a,b)=>priority(a.el)-priority(b.el)||a.index-b.index).slice(0,600);
+      const tableDiscovery={total:globalCandidates.length,truncated:globalCandidates.length>600,samples:selected.map(({el,index})=>{
+        const ancestors=[];for(let p=el.parentElement;p&&ancestors.length<20;p=p.parentElement)ancestors.push(describe(p));
+        return {index,element:describe(el),knownTableRef:el.closest?.('.viewTableFieldNew')?reference(el.closest('.viewTableFieldNew')):null,ancestors,
+          children:[...el.children].slice(0,40).map(describe),childrenTruncated:el.children.length>40,
+          siblings:[...(el.parentElement?.children||[])].slice(0,40).map(describe)};
+      })};
+      return {tableDiscovery,components:{tables:components('.viewTableFieldNew'),multiValue:components('.horizontalMultiInput')},total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
         const ancestors=[];let parent=el.parentElement;
         for(let i=0;parent&&i<7;i++,parent=parent.parentElement)ancestors.push(describe(parent));
         const ids=(el.getAttribute('aria-controls')||'').split(/\s+/).filter(Boolean);

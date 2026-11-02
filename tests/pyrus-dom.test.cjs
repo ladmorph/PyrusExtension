@@ -3,6 +3,15 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('table discovery includes sibling read-only rows and deeply nested cells without data',()=>{
+ const w=page('<div class="viewTableFieldNew"><table><tbody></tbody></table></div><div class="readOnlyTableLayer"><div role="row"><div role="cell" class="readOnlyCell">SECRET_CELL</div></div></div><div class="viewTableFieldNew">'+'<div>'.repeat(22)+'<table><tbody><tr><td>SECRET_DEEP</td></tr></tbody></table>'+'</div>'.repeat(22)+'</div>');
+ w.eval(code('structure.js'));const report=w.pyrusStructure();
+ const outside=report.main.tableDiscovery.samples.find(s=>s.element.classes.includes('readOnlyCell'));
+ assert.ok(outside);assert.equal(outside.knownTableRef,null);assert.ok(outside.ancestors.some(a=>a.classes.includes('readOnlyTableLayer')));
+ assert.equal(report.main.components.tables.items[1].truncated,false);
+ assert.ok(JSON.stringify(report.main.components.tables.items[1]).includes('TD'));
+ assert.ok(!JSON.stringify(report).includes('SECRET'));w.close();
+});
 test('copies multi-choice tokens individually and continues to dependent fields',async()=>{
  const token=v=>'<span class="multiInputToken"><span class="token__text">'+v+'</span><span class="token__cross">x</span></span>';
  const html=selected=>row('Методы','<div class="formFieldRadio__content"><div class="horizontalMultiInput">'+selected.map(token).join('')+'<input role="combobox" aria-controls="choices"></div></div>');
