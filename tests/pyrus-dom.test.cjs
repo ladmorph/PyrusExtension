@@ -73,10 +73,21 @@ test('omitting a differing catalog does not silently fill dependent fields',asyn
  const [result]=await w.pyrusTransfer.apply(source,[source[1].key],true);
  assert.equal(result.reason,'unselected-controller');assert.equal(w.document.querySelector('.multiLineInputContent').textContent,'Старое');w.close();
 });
-test('target expansion opens only the copied groups',async()=>{
+test('incomplete source titles do not restrict target expansion',async()=>{
  const w=page('<div class="formField"><div class="formFieldGroupTitle">Нужная</div><div class="formFieldGroupTitle">Лишняя</div></div>');
  const titles=[...w.document.querySelectorAll('.formFieldGroupTitle')];titles.forEach(t=>t.onclick=()=>t.classList.add('formFieldGroupTitle_expanded'));
- await w.pyrusExpand.run({groupTitles:['Нужная']});assert.ok(titles[0].classList.contains('formFieldGroupTitle_expanded'));assert.ok(!titles[1].classList.contains('formFieldGroupTitle_expanded'));w.close();
+ const report=await w.pyrusExpand.run({groupTitles:['Нужная']});assert.equal(report.mode,'all-target-groups');assert.equal(report.eligibleBefore,2);assert.ok(titles.every(t=>t.classList.contains('formFieldGroupTitle_expanded')));w.close();
+});
+test('draft sibling group layout exposes a catalog despite unrelated source titles',async()=>{
+ const w=page('<div class="formView formView_newForm"><div class="formFieldGroup"><div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__content formFieldGroup__contentWrapper"><div class="formFieldBaseWrapper__titleWrapper"><button type="button" class="formFieldGroupTitle"><label class="formFieldTitle">Раздел черновика</label></button></div></div></div></div></div>');
+ const title=w.document.querySelector('button');
+ title.onclick=()=>{title.classList.add('formFieldGroupTitle_expanded');w.document.querySelector('.formView').insertAdjacentHTML('beforeend',row('Система','<div class="formFieldCatalog__content"><input role="combobox"></div>'));};
+ const source=[{key:'source-catalog',label:'Система',kind:'pyrus-catalog',value:'Система А',groups:[]}];
+ assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');
+ const report=await w.pyrusExpand.run({groupTitles:['Иная секция','Другая секция']});
+ assert.equal(report.confirmedOpen,1);assert.equal(report.remaining,0);
+ assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'unique-label');
+ await w.pyrusExpand.run({groupTitles:['Иная секция']});assert.equal(w.document.querySelectorAll('input').length,1);w.close();
 });
 test('popup capture reads source without expanding any sections',async()=>{
  const source=page(row('Открытое поле','<div contenteditable="true" class="multiLineInputContent">Текст</div>')+'<div class="formField"><div class="formFieldGroupTitle">Не открывать</div></div>');

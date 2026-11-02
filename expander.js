@@ -29,10 +29,11 @@
     run: async (options={}) => {
       const started=Date.now(), attempted=new WeakSet();
       const normalize=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').replace(/\s*\*\s*$/,'').trim();
-      // Empty metadata means that group membership is unknown, not that no groups may open.
+      // Source titles are incomplete metadata: draft sections can have different nesting.
+      // Expansion is invoked only on the target; never use these titles as an allowlist.
       const allowed=Array.isArray(options.groupTitles)?options.groupTitles.map(normalize).filter(Boolean):[];
-      const relevant=()=>candidates().filter(el=>!allowed.length || !el.matches?.('.formFieldGroupTitle') || allowed.includes(titleText(el)));
-      const report={eligibleBefore:relevant().length,requestedTitleCount:allowed.length,mode:allowed.length?'source-groups':'all-target-groups',clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
+      const relevant=candidates;
+      const report={eligibleBefore:relevant().length,requestedTitleCount:allowed.length,mode:'all-target-groups',clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
       // Several passes discover nested sections that mount after a parent opens.
       for(let pass=0;pass<8;pass++) {
         const pending=relevant().filter(el=>!attempted.has(el));
