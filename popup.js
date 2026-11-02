@@ -92,7 +92,7 @@ action('apply',async()=>{
  const current=await page('preview',[snapshot.fields,$('overwrite').checked],previewTab.id);
  if(current.url!==previewTab.url)throw new Error('Страница изменилась. Повторите сопоставление.');
  const result=await page('apply',[snapshot.fields,keys,$('overwrite').checked,snapshot.expandedGroups||[]],previewTab.id);
- await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,matching:r.matching||null}))});
+ await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,table:r.table,matching:r.matching||null}))});
  reset();status(result.data.map(r=>r.label+': '+r.message).join('\n'));
 });
 action('clear',async()=>{await storage.remove('snapshot');await loadSource();reset();status('Сохранённые поля удалены.');});
@@ -136,17 +136,21 @@ action('recorderStop',async()=>{
 });
 action('recorderDiscard',async()=>{await page('recorderDiscard');status('Запись справочника остановлена и удалена из памяти страницы.');});
 action('export',async()=>{
- let targetStructure=null,structureStatus='unavailable';
- const previousPage=lastPage;
- try{const current=await page('structure');if(current.url!==snapshot?.url){targetStructure=current.data;structureStatus='captured';}else{structureStatus='source-is-active';}}catch{structureStatus='capture-failed';}
- await record('export');
- const report={format:'pyrus-transfer-debug',schemaVersion:1,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,browser:navigator.userAgent,source:snapshot?{count:snapshot.fields.length,kinds:snapshot.fields.reduce((a,f)=>(a[f.kind]=(a[f.kind]||0)+1,a),{})}:null,lastPage,lastPlan,events:diagnostics};
- report.sourceTables=(snapshot?.fields||[]).filter(f=>f.kind==='pyrus-table').map((f,index)=>({index,rows:f.value.rows.length,columns:f.value.columns.length,rowWidths:f.value.rows.map(row=>row.length),unsupported:f.unsupported}));
- report.structures={source:snapshot?.sourceStructure||null,target:targetStructure,status:structureStatus,sourceMissing:!snapshot?.sourceStructure};
- report.lastTransferPage=previousPage;
- const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
- const a=document.createElement('a');a.href=url;a.download='pyrus-debug-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
- status('Отчёт скачан. Приложите JSON к сообщению и опишите ожидаемый результат.');
+ const start=diagnostics.map(e=>e.action).lastIndexOf('transfer-start');
+ const attempt=start<0?diagnostics.slice(-10):diagnostics.slice(start);
+ const transfer=[...attempt].reverse().find(e=>e.action==='transfer');
+ const pageState=[...attempt].reverse().find(e=>e.action==='apply')?.details?.page || lastPage;
+ const results=transfer?.details?.results || [];
+ const failures=results.filter(r=>r.status!=='dispatched');
+ const indices=new Set(failures.map(r=>r.sourceIndex));
+ const report={format:'pyrus-transfer-debug',schemaVersion:2,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,
+  source:snapshot?{count:snapshot.fields.length}:null,
+  attempt:{started:attempt.find(e=>e.action==='transfer-start')?.time||null,completed:Boolean(transfer),selected:attempt.find(e=>e.action==='transfer-start')?.details||null,successCount:results.filter(r=>r.status==='dispatched').length,failures},
+  lastPage:pageState?{recognized:pageState.recognized,table:transfer?null:pageState.table||null,picker:pageState.picker||null,expansion:pageState.expansion||null,comparison:(pageState.comparison||[]).filter(f=>indices.has(f.sourceIndex))}:null,
+  sourceTables:(snapshot?.fields||[]).flatMap((f,index)=>f.kind==='pyrus-table'&&indices.has(index)?[{sourceIndex:index,rows:f.value.rows.length,columns:f.value.columns.length,rowWidths:f.value.rows.map(row=>row.length)}]:[]),
+  errors:attempt.filter(e=>e.action==='error').map(e=>({time:e.time,details:e.details}))};
+ download(report,'pyrus-debug');
+ status('Компактный отчёт скачан: последняя попытка, ошибки и локальный контекст. Полная структура доступна отдельной кнопкой.');
 });
 action('clearLogs',async()=>{diagnostics=[];lastPage=null;lastPlan=null;lastStructure=null;await storage.remove(['diagnostics','lastPage','lastPlan']);logView();status('Диагностика очищена.');});
 (async()=>{const saved=await storage.get(['diagnostics','lastPage','lastPlan']);diagnostics=saved.diagnostics||[];lastPage=saved.lastPage||null;lastPlan=saved.lastPlan||null;logView();await loadSource();reset();})().catch(e=>status(e.message,true));

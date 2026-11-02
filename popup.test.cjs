@@ -22,10 +22,12 @@ test('popup diagnostics survives reopen and exports a report without page data',
   assert.ok(downloaded);
   const text=await blob.text(), report=JSON.parse(text);
   assert.equal(report.source.count,1);
-  assert.equal(report.structures.source.main.samples[0].element.tag,'TD');
-  assert.equal(report.structures.sourceMissing,false);
-  assert.equal(report.structures.status,'captured');
-  assert.ok(report.structures.target);
+  assert.equal(report.schemaVersion,2);
+  assert.equal(report.structures,undefined);
+  assert.ok(text.length<6000);
+
+
+
   assert.equal(report.lastPage.recognized,2);
   assert.ok(!text.includes('SECRET'));
   assert.ok(!text.includes('secret.example'));

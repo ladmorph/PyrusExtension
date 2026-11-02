@@ -3,6 +3,14 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('target rows are materialized before deciding to add a row',async()=>{
+ const w=page(tableFixture(['A']));const root=w.document.querySelector('.viewTableFieldNew');let added=0;
+ root.scrollIntoView=()=>{root.querySelector('tbody').innerHTML='<tr class="viewTableRow"><td class="formCell"><div class="cellString__content" contenteditable="true"></div></td></tr>';};
+ root.querySelector('.addRowButton').onclick=()=>added++;
+ const [source]=w.pyrusTransfer.capture();source.value.rows=[['Текст']];
+ const [result]=await w.pyrusTransfer.apply([source],[source.key],true);
+ assert.equal(result.status,'dispatched');assert.equal(added,0);w.close();
+});
 test('table dropdown opens on pointerdown without typing into display input',async()=>{
  const w=page(tableFixture(['Выбор'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
  const input=w.document.querySelector('td input');let writes=0,chosen=0;
