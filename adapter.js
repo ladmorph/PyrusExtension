@@ -8,9 +8,9 @@
   function groupPath(row) {
     const labels=[];
     for(let parent=row?.parentElement;parent;parent=parent.parentElement) {
-      if(!parent.matches?.('.formField'))continue;
+      if(!parent.matches?.('.formField,.formFieldGroup'))continue;
       const title=parent.querySelector('.formFieldGroupTitle');
-      if(title && title.closest('.formField')===parent && !row.contains(title))labels.unshift(normalize(title.querySelector('.formFieldTitle__textValue')?.textContent || title.textContent));
+      if(title && title.closest('.formField,.formFieldGroup')===parent && !row.contains(title))labels.unshift(normalize(title.querySelector('.formFieldTitle__textValue')?.textContent || title.textContent));
     }
     return labels.filter(Boolean);
   }
@@ -168,7 +168,7 @@
     el.blur?.();
   }
   globalThis.pyrusTransfer = {
-    diagnose: () => {
+    diagnose: (source=[]) => {
       const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
       const recognized = inventory();
       const kinds = {};
@@ -180,6 +180,13 @@
         unsupported: recognized.filter(f => f.unsupported).length,
         ambiguousControls: duplicates, kinds,
         picker:globalThis.pyrusPickerStatus || null,
+        comparison: source.slice(0,200).map((s,index)=>{
+          const matches=recognized.map((f,targetIndex)=>({f,targetIndex})).filter(({f})=>normalize(f.label)===normalize(s.label));
+          const titles=[...(document.querySelectorAll('.formFieldBaseWrapper__titleWrapper') || [])].filter(el=>normalize(el.querySelector?.('.formFieldTitle__textValue')?.textContent || el.textContent)===normalize(s.label));
+          return {sourceIndex:index,kind:s.kind,labelLength:normalize(s.label).length,groupDepth:(s.groups||[]).length,hasFieldId:Boolean(s.fieldId),sourceEmpty:s.value==='' || s.value==null,
+            titleNodes:titles.length,hiddenTitleNodes:titles.filter(el=>!visible(el)).length,
+            candidates:matches.slice(0,20).map(({f,targetIndex})=>({targetIndex,kind:f.kind,groupDepth:f.groups.length,compatible:compatible(s,f),sameKey:f.key===s.key,sameValue:JSON.stringify(f.value)===JSON.stringify(s.value),sameGroupPath:JSON.stringify(f.groups)===JSON.stringify(s.groups||[]),hasFieldId:Boolean(f.fieldId)}))};
+        }),
         frames: document.querySelectorAll('iframe').length,
         truncated: nodes.length > 200,
         controls: nodes.slice(0,200).map((el,index) => ({
@@ -213,19 +220,24 @@
       // A selected dependent field must not bypass an earlier differing picker.
       const lastSelected=source.reduce((last,f,i)=>keys.includes(f.key)?i:last,-1);
       const requiredPickers=source.slice(0,lastSelected+1).filter(f=>isPicker(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
-      for(const controller of requiredPickers){
-        const p=plan(source,overwrite).find(p=>p.key===controller.key);
-        if(!p?.target || valueText(p.target.value)!==valueText(controller.value))return [{label:controller.label,status:'blocked',reason:'unselected-controller',sourceIndex:source.indexOf(controller),matching:p?.matching||null,message:'Сначала перенесите это управляющее поле: выберите его и при необходимости включите замену заполненных значений. Зависимые поля не изменены.'}];
-      }
       let blocked=false;
       for (const key of ordered) {
+        // Check only preceding controllers, after earlier selected fields have been filled.
+        const sourceIndex=source.findIndex(f=>f.key===key);
+        const controller=requiredPickers.find(f=>source.indexOf(f)<sourceIndex && (()=>{
+          const p=plan(source,overwrite).find(p=>p.key===f.key);
+          return !p?.target || valueText(p.target.value)!==valueText(f.value);
+        })());
+        if(!blocked && controller){
+          result.push({label:source[sourceIndex].label,status:'blocked',reason:'unselected-controller',controllerIndex:source.indexOf(controller),message:'Не заполнено: предыдущее управляющее поле не выбрано для переноса и отличается от источника.'});blocked=true;continue;
+        }
         if(blocked){result.push({label:source.find(f=>f.key===key)?.label || 'Поле',status:'blocked',reason:'blocked-by-picker',message:'Не заполнено: предыдущий справочник или список не удалось перенести. Исправьте его и повторите перенос.'});continue;}
         let p = plan(source, overwrite).find(p => p.key === key);
         // Conditional controls may mount asynchronously after an earlier input/change.
         if (p?.deferred) {
           for(let attempt=0;attempt<6 && p.deferred;attempt++) {
             await pause(250);
-            if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles});
+            if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
             p=plan(source,overwrite).find(p=>p.key===key);
           }
         }
@@ -238,7 +250,7 @@
         try {
           await setValue(p.target, p.value);
           await waitForUpdate(p.target.kind==='pyrus-catalog');
-          if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles});
+          if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
           const resolved=plan(source,true).find(f=>f.key===key);
           const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && JSON.stringify(resolved.target.value)===JSON.stringify(p.value));
           if(!accepted && isPicker(p.target.kind))blocked=true;

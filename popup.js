@@ -24,10 +24,11 @@ async function page(method,args=[],expectedTab){
  await chrome.scripting.executeScript({target:{tabId:tab.id},files:['adapter.js','expander.js','structure.js','catalog-recorder.js']});
  const [response]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(m,a,prepare)=>{
    if(prepare.sourceUrl && ['preview','apply','expand'].includes(m) && location.href===prepare.sourceUrl)throw new Error('Открыт источник. Раскрытие отменено.');
-   const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles}) : null;
+   const before=m==='apply'?globalThis.pyrusTransfer.diagnose(prepare.sourceFields):null;
+   const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
    const data=m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
-   return {url:location.href,data,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(),expansion,sections:globalThis.pyrusExpand.inspect()}};
- },args:[method,args,{sourceUrl:snapshot?.url || null,groupTitles:snapshot?[...new Set([...(snapshot.expandedGroups||[]),...snapshot.fields.flatMap(f=>f.groups || [])])]:undefined}]});
+   return {url:location.href,data,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
+ },args:[method,args,{sourceUrl:snapshot?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
  if(!response?.result)throw new Error('Нет ответа от страницы. Обновите вкладку.');
  lastPage=response.result.diagnostic;await storage.set({lastPage});await record(method,{page:lastPage});
  return {...response.result,tabId:tab.id};
@@ -87,10 +88,11 @@ for(const [id,value] of [['selectAll',true],['selectNone',false]])action(id,asyn
 action('apply',async()=>{
  const keys=[...$('fields').querySelectorAll('input:checked:not(:disabled)')].map(el=>el.value);
  if(!keys.length||!previewTab)throw new Error('Повторите сопоставление и выберите поля.');
+ await record('transfer-start',{selectedIndices:snapshot.fields.map((f,i)=>keys.includes(f.key)?i:null).filter(i=>i!==null),overwrite:$('overwrite').checked});
  const current=await page('preview',[snapshot.fields,$('overwrite').checked],previewTab.id);
  if(current.url!==previewTab.url)throw new Error('Страница изменилась. Повторите сопоставление.');
  const result=await page('apply',[snapshot.fields,keys,$('overwrite').checked,snapshot.expandedGroups||[]],previewTab.id);
- await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,matching:r.matching||null}))});
+ await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,matching:r.matching||null}))});
  reset();status(result.data.map(r=>r.label+': '+r.message).join('\n'));
 });
 action('clear',async()=>{await storage.remove('snapshot');await loadSource();reset();status('Сохранённые поля удалены.');});

@@ -29,11 +29,27 @@
     run: async (options={}) => {
       const started=Date.now(), attempted=new WeakSet();
       const normalize=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').replace(/\s*\*\s*$/,'').trim();
-      // Source titles are incomplete metadata: draft sections can have different nesting.
-      // Expansion is invoked only on the target; never use these titles as an allowlist.
-      const allowed=Array.isArray(options.groupTitles)?options.groupTitles.map(normalize).filter(Boolean):[];
-      const relevant=candidates;
-      const report={eligibleBefore:relevant().length,requestedTitleCount:allowed.length,mode:'all-target-groups',clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
+      const fields=options.fields || [];
+      const paths=fields.flatMap(f=>f.groups || []);
+      // Old snapshots may lack field paths. Their source sections are hints, never
+      // permission to expand the entire draft when no matching title is found.
+      const allowed=[...new Set([...paths,...(paths.length?[]:options.groupTitles || [])].map(normalize).filter(Boolean))];
+      const selective=options.groupTitles!==undefined || options.fields!==undefined;
+      function needed(el){
+        if(!selective)return true;
+        if(allowed.includes(titleText(el)))return true;
+        const scope=el.closest('.formFieldGroup,details') || el.closest('.formFieldBaseWrapper,.formField');
+        if(!scope)return false;
+        // A hidden child may already exist in the DOM. Open its ancestors without
+        // opening unrelated siblings, even if the source had no group metadata.
+        return [...scope.querySelectorAll('.formFieldGroupTitle,.formFieldBaseWrapper__titleWrapper')].some(title=>{
+          if(title.matches('.formFieldGroupTitle'))return title!==el && title.closest('.formFieldGroup,.formFieldBaseWrapper,.formField')!==scope && allowed.includes(titleText(title));
+          const label=titleText(title);
+          return fields.some(f=>normalize(f.label)===label);
+        });
+      }
+      const relevant=()=>candidates().filter(needed);
+      const report={eligibleBefore:relevant().length,totalEligibleBefore:candidates().length,requestedTitleCount:allowed.length,mode:selective?'selected-target-groups':'all-target-groups',clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
       // Several passes discover nested sections that mount after a parent opens.
       for(let pass=0;pass<8;pass++) {
         const pending=relevant().filter(el=>!attempted.has(el));
@@ -53,6 +69,8 @@
       }
       await pause(350);
       report.remaining=relevant().length;
+      report.unmatchedTitleCount=allowed.filter(name=>![...document.querySelectorAll('.formFieldGroupTitle')].some(el=>titleText(el)===name)).length;
+      report.unrelatedCollapsed=candidates().length-report.remaining;
       if(report.remaining)report.limited=true;
       report.elapsedMs=Date.now()-started;
       return report;

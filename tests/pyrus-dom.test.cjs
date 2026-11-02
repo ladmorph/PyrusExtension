@@ -3,6 +3,29 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('later omitted ambiguous catalog does not block an earlier employee',async()=>{
+ const w=page(row('Сотрудник','<input role="combobox" aria-owns="people"><span class="personFieldAvatar"></span>')+row('Каталог','<div class="formFieldCatalog__content"><input role="combobox"></div>')+row('Каталог','<div class="formFieldCatalog__content"><input role="combobox"></div>')+row('Причина','<input>')+'<div id="people" role="listbox"><div role="option">Иван Тестовый</div></div>');
+ const input=w.document.querySelector('input');w.document.querySelector('[role=option]').onclick=()=>{input.value='Иван Тестовый';w.document.getElementById('people').style.display='none';};
+ const source=[{key:'person',label:'Сотрудник',kind:'pyrus-person',value:'Иван Тестовый'},{key:'catalog',label:'Каталог',kind:'pyrus-catalog',value:'Запись'},{key:'reason',label:'Причина',kind:'text',value:'Текст'}];
+ const result=await w.pyrusTransfer.apply(source,['person','reason'],true);
+ assert.equal(result[0].status,'dispatched');assert.equal(input.value,'Иван Тестовый');
+ assert.equal(result[1].reason,'unselected-controller');assert.equal(result[1].controllerIndex,1);assert.equal(result[1].sourceIndex,2);w.close();
+});
+test('comparison diagnostics explain ambiguous and hidden fields without private text',()=>{
+ const w=page(row('SECRET_LABEL','<input value="SECRET_VALUE">')+row('SECRET_LABEL','<input>')+'<div style="display:none">'+row('SECRET_HIDDEN','<input>')+'</div>');
+ const source=[{key:'SECRET_ID',label:'SECRET_LABEL',kind:'text',value:'SECRET_VALUE',groups:[]},{key:'hidden',label:'SECRET_HIDDEN',kind:'text',value:'HIDDEN_VALUE'}];
+ const report=w.pyrusTransfer.diagnose(source);
+ assert.equal(report.comparison[0].candidates.length,2);assert.equal(report.comparison[0].candidates[0].sameValue,true);
+ assert.equal(report.comparison[1].hiddenTitleNodes,1);assert.ok(!JSON.stringify(report).includes('SECRET'));assert.ok(!JSON.stringify(report).includes('HIDDEN_VALUE'));w.close();
+});
+test('captures actual Pyrus group containers and opens only the selected field group',async()=>{
+ const group=(name,content)=>'<div class="formFieldGroup"><div class="formFieldBaseWrapper"><button class="formFieldGroupTitle">'+name+'</button></div><div class="body">'+content+'</div></div>';
+ const w=page(group('Нужная',row('Описание','<input value="пример">'))+group('Лишняя',row('Другое','<input>')));
+ const source=w.pyrusTransfer.capture().slice(0,1);assert.deepEqual([...source[0].groups],['Нужная']);
+ const titles=[...w.document.querySelectorAll('button')];titles.forEach(t=>t.onclick=()=>t.classList.add('formFieldGroupTitle_expanded'));
+ await w.pyrusExpand.run({groupTitles:['Нужная','Лишняя'],fields:source});
+ assert.ok(titles[0].classList.contains('formFieldGroupTitle_expanded'));assert.ok(!titles[1].classList.contains('formFieldGroupTitle_expanded'));w.close();
+});
 // Class names and nesting come from the user's structure report. Field text and behavior are synthetic.
 const row=(title,content)=>`<div class="formField"><div class="formFieldBaseWrapper" data-test-id="form-field"><div class="formFieldBaseWrapper__content"><div class="formFieldBaseWrapper__titleWrapper">${title} *</div><div class="formFieldBaseWrapper__otherWrapper"><div class="formFieldBaseWrapper__inputWrapper"><div class="formFieldContent">${content}</div></div></div></div></div></div>`;
 function page(html){
@@ -73,21 +96,22 @@ test('omitting a differing catalog does not silently fill dependent fields',asyn
  const [result]=await w.pyrusTransfer.apply(source,[source[1].key],true);
  assert.equal(result.reason,'unselected-controller');assert.equal(w.document.querySelector('.multiLineInputContent').textContent,'Старое');w.close();
 });
-test('incomplete source titles do not restrict target expansion',async()=>{
+test('source titles restrict target expansion',async()=>{
  const w=page('<div class="formField"><div class="formFieldGroupTitle">Нужная</div><div class="formFieldGroupTitle">Лишняя</div></div>');
  const titles=[...w.document.querySelectorAll('.formFieldGroupTitle')];titles.forEach(t=>t.onclick=()=>t.classList.add('formFieldGroupTitle_expanded'));
- const report=await w.pyrusExpand.run({groupTitles:['Нужная']});assert.equal(report.mode,'all-target-groups');assert.equal(report.eligibleBefore,2);assert.ok(titles.every(t=>t.classList.contains('formFieldGroupTitle_expanded')));w.close();
+ const report=await w.pyrusExpand.run({groupTitles:['Нужная']});assert.equal(report.mode,'selected-target-groups');assert.equal(report.eligibleBefore,1);assert.ok(titles[0].classList.contains('formFieldGroupTitle_expanded'));assert.ok(!titles[1].classList.contains('formFieldGroupTitle_expanded'));w.close();
 });
-test('draft sibling group layout exposes a catalog despite unrelated source titles',async()=>{
+test('draft sibling group with unknown contents stays closed for unrelated source titles',async()=>{
  const w=page('<div class="formView formView_newForm"><div class="formFieldGroup"><div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__content formFieldGroup__contentWrapper"><div class="formFieldBaseWrapper__titleWrapper"><button type="button" class="formFieldGroupTitle"><label class="formFieldTitle">Раздел черновика</label></button></div></div></div></div></div>');
  const title=w.document.querySelector('button');
  title.onclick=()=>{title.classList.add('formFieldGroupTitle_expanded');w.document.querySelector('.formView').insertAdjacentHTML('beforeend',row('Система','<div class="formFieldCatalog__content"><input role="combobox"></div>'));};
  const source=[{key:'source-catalog',label:'Система',kind:'pyrus-catalog',value:'Система А',groups:[]}];
  assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');
  const report=await w.pyrusExpand.run({groupTitles:['Иная секция','Другая секция']});
- assert.equal(report.confirmedOpen,1);assert.equal(report.remaining,0);
- assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'unique-label');
- await w.pyrusExpand.run({groupTitles:['Иная секция']});assert.equal(w.document.querySelectorAll('input').length,1);w.close();
+ assert.equal(report.confirmedOpen,0);assert.equal(report.remaining,0);
+ assert.equal(report.unmatchedTitleCount,2);
+ assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');
+ await w.pyrusExpand.run({groupTitles:['Иная секция']});assert.equal(w.document.querySelectorAll('input').length,0);w.close();
 });
 test('popup capture reads source without expanding any sections',async()=>{
  const source=page(row('Открытое поле','<div contenteditable="true" class="multiLineInputContent">Текст</div>')+'<div class="formField"><div class="formFieldGroupTitle">Не открывать</div></div>');
@@ -184,7 +208,7 @@ test('empty source group metadata opens target sections and exposes the missing 
  const input=w.document.querySelector('input');w.document.querySelector('#catalog td').onclick=()=>{input.value='Тестовая система';w.document.getElementById('catalog').style.display='none';};
  const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Тестовая система',groups:[]}];
  assert.equal(w.pyrusTransfer.preview(source,false)[0].deferred,true);
- const report=await w.pyrusExpand.run({groupTitles:[]});assert.equal(report.clicked,1);assert.equal(report.mode,'all-target-groups');assert.equal(report.requestedTitleCount,0);
+ const report=await w.pyrusExpand.run({groupTitles:[],fields:source});assert.equal(report.clicked,1);assert.equal(report.mode,'selected-target-groups');assert.equal(report.requestedTitleCount,0);
  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);assert.equal(result.status,'dispatched');w.close();
 });
 test('captures expanded titles independently of fields and leaves collapsed source sections alone',()=>{
