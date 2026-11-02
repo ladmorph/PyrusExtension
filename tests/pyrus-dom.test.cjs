@@ -3,6 +3,15 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('table dropdown opens on pointerdown without typing into display input',async()=>{
+ const w=page(tableFixture(['Выбор'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
+ const input=w.document.querySelector('td input');let writes=0,chosen=0;
+ input.addEventListener('input',()=>writes++);
+ input.addEventListener('pointerdown',()=>{if(w.document.querySelector('.inputCompletion__popup'))return;w.document.body.insertAdjacentHTML('beforeend','<div class="inputCompletion__popup"><div role="option">Вариант</div></div>');w.document.querySelector('[role=option]').onclick=()=>{input.value='Вариант';chosen++;};});
+ const [source]=w.pyrusTransfer.capture();source.value.rows=[['Вариант']];
+ const [result]=await w.pyrusTransfer.apply([source],[source.key],true);
+ assert.equal(result.status,'dispatched');assert.equal(chosen,1);assert.equal(writes,0);w.close();
+});
 test('Pyrus data cells exclude an unmarked row-number cell and keep sticky data',async()=>{
  const w=page(tableFixture(['A','B'],[['Первое','Второе']]));
  const rowEl=w.document.querySelector('tbody tr');

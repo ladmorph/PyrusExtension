@@ -114,6 +114,8 @@
   }
   async function choose(field,value) {
     const el=field.el,previous=el.value;
+    const tableChoice=el.matches('.cellRadioButton__input');
+    globalThis.pyrusPickerStatus={outcome:'opening',kind:field.kind,tableChoice};
     const closePicker=()=>{
       el.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));
       el.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',code:'Escape',bubbles:true}));
@@ -125,8 +127,9 @@
     const existingPopups=new Set([...document.querySelectorAll('.inputCompletion__popup')].filter(visible));
     el.focus();
     const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
-    if(icon)icon.click();else el.click();
-    writeNative(el,value);
+    if(icon)icon.click();else if(tableChoice)activateOption(el,value,false);else el.click();
+    // Table choice input displays the selected label; it is not a search editor.
+    if(!tableChoice)writeNative(el,value);
     try {
       const searchQueries=[...new Set([String(value),String(value).split(/[,;:|/(\[]/)[0].trim(),String(value).trim().split(/\s+/).slice(0,2).join(' '),String(value).trim().split(/\s+/)[0]].filter(Boolean))];
       for(let attempt=0;attempt<(field.kind==='pyrus-catalog'?40:20);attempt++) {
@@ -159,7 +162,7 @@
       const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'picker-error';
       globalThis.pyrusPickerStatus={outcome:reason,kind:field.kind,panelCount,optionCount};
       if(globalThis.pyrusStructure)try{globalThis.pyrusPickerFailureStructure=globalThis.pyrusStructure();}catch{}
-      writeNative(el,previous);closePicker();throw e;
+      if(!tableChoice)writeNative(el,previous);closePicker();throw e;
     }
   }
   async function setValue(field, value) {
