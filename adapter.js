@@ -107,9 +107,15 @@
   }
   async function choose(field,value) {
     const el=field.el,previous=el.value;
+    const closePicker=()=>{
+      el.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));
+      el.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',code:'Escape',bubbles:true}));
+      el.blur();
+    };
     globalThis.pyrusPickerFailureStructure=null;
     if(field.kind!=='pyrus-multi-choice' && valueText(previous)===valueText(value)){globalThis.pyrusPickerStatus={outcome:'already-matched',kind:field.kind};return;}
     let panelCount=0,optionCount=0;
+    const existingPopups=new Set([...document.querySelectorAll('.inputCompletion__popup')].filter(visible));
     el.focus();
     const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
     if(icon)icon.click();else el.click();
@@ -122,7 +128,11 @@
         const ids=[...(el.getAttribute('aria-owns')||'').split(/\s+/),...(el.getAttribute('aria-controls')||'').split(/\s+/)].filter(Boolean);
         let panels=ids.map(id=>document.getElementById(id)).filter(p=>p&&visible(p));
         if(!panels.length){
-          const popups=[...document.querySelectorAll('.inputCompletion__popup')].filter(visible);
+          let popups=[...document.querySelectorAll('.inputCompletion__popup')].filter(visible);
+          if(popups.length>1){
+            const opened=popups.filter(p=>!existingPopups.has(p));
+            if(opened.length===1)popups=opened;
+          }
           if(popups.length>1)throw new Error('choice-popup-ambiguous');
           if(popups.length===1 && (document.activeElement===el || el.getAttribute('aria-expanded')==='true'))panels=popups;
           else if(!popups.length){const lists=[...document.querySelectorAll('[role="listbox"]')].filter(visible);if(lists.length===1)panels=lists;}
@@ -135,14 +145,14 @@
         optionCount=candidates.length;
         const options=candidates.filter(o=>matchOption(o,value,field.kind==='pyrus-catalog'));
         if(options.length>1)throw new Error('choice-ambiguous');
-        if(options.length===1){activateOption(options[0],value,field.kind==='pyrus-catalog');await delay(200);el.blur();globalThis.pyrusPickerStatus={outcome:'selected',kind:field.kind,panelCount,optionCount};return;}
+        if(options.length===1){activateOption(options[0],value,field.kind==='pyrus-catalog');await delay(200);closePicker();globalThis.pyrusPickerStatus={outcome:'selected',kind:field.kind,panelCount,optionCount};return;}
       }
       throw new Error('choice-option-not-found');
     }catch(e){
       const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'picker-error';
       globalThis.pyrusPickerStatus={outcome:reason,kind:field.kind,panelCount,optionCount};
       if(globalThis.pyrusStructure)try{globalThis.pyrusPickerFailureStructure=globalThis.pyrusStructure();}catch{}
-      writeNative(el,previous);el.blur();throw e;
+      writeNative(el,previous);closePicker();throw e;
     }
   }
   async function setValue(field, value) {

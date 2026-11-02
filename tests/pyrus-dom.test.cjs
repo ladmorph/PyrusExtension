@@ -3,6 +3,16 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('new picker is distinguished from a stale portal and dismissed after selection',async()=>{
+ const w=page(row('Выбор','<input role="combobox">')+'<div class="inputCompletion__popup" id="stale"><div role="option">Нужное</div></div>');
+ const input=w.document.querySelector('input');let staleClicks=0,escapes=0;
+ w.document.querySelector('#stale [role=option]').onclick=()=>staleClicks++;
+ input.onclick=()=>{if(w.document.getElementById('fresh'))return;w.document.body.insertAdjacentHTML('beforeend','<div class="inputCompletion__popup" id="fresh"><div role="option">Нужное</div></div>');w.document.querySelector('#fresh [role=option]').onclick=()=>{input.value='Нужное';};};
+ input.onkeydown=e=>{if(e.key==='Escape'){escapes++;w.document.getElementById('fresh').style.display='none';}};
+ const source=[{key:'choice',label:'Выбор',kind:'pyrus-choice',value:'Нужное'}];
+ const [result]=await w.pyrusTransfer.apply(source,['choice'],true);
+ assert.equal(result.status,'dispatched');assert.equal(staleClicks,0);assert.equal(escapes,1);w.close();
+});
 test('table discovery includes sibling read-only rows and deeply nested cells without data',()=>{
  const w=page('<div class="viewTableFieldNew"><table><tbody></tbody></table></div><div class="readOnlyTableLayer"><div role="row"><div role="cell" class="readOnlyCell">SECRET_CELL</div></div></div><div class="viewTableFieldNew">'+'<div>'.repeat(22)+'<table><tbody><tr><td>SECRET_DEEP</td></tr></tbody></table>'+'</div>'.repeat(22)+'</div>');
  w.eval(code('structure.js'));const report=w.pyrusStructure();
