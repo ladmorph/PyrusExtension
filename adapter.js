@@ -1,0 +1,206 @@
+(() => {
+  const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').replace(/\s*\*\s*$/, '').trim();
+  const valueText = value => String(value ?? '').normalize('NFKC').replace(/\s+/g,' ').trim();
+  const rowSelector = '.formFieldBaseWrapper,[data-field-id],[data-fieldid],.form-field,.field-row,.form-group';
+  const visible = el => Boolean(el?.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden';
+  function groupPath(row) {
+    const labels=[];
+    for(let parent=row?.parentElement;parent;parent=parent.parentElement) {
+      if(!parent.matches?.('.formField'))continue;
+      const title=parent.querySelector('.formFieldGroupTitle');
+      if(title && title.closest('.formField')===parent && !row.contains(title))labels.unshift(normalize(title.textContent));
+    }
+    return labels.filter(Boolean);
+  }
+  function inventory() {
+    const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
+    const pyrusPage=Boolean(document.querySelector?.('.formFieldBaseWrapper'));
+    return nodes.filter(el => !el.closest('[role="dialog"]') &&
+      !el.closest('.copyToClipboard,.viewTableSearch,.formCell,.CommentSection,nav,[role="search"]') &&
+      (!pyrusPage || el.closest('.formFieldBaseWrapper')) &&
+      !['hidden','password','file','submit','button','reset','search'].includes(el.type) &&
+      !el.disabled && !el.readOnly && !el.closest('.checkbox_disabled') &&
+      (visible(el) || (el.type==='checkbox' && visible(el.closest('.checkbox'))))).map(el => {
+      const row = el.closest(rowSelector);
+      const pyrus=Boolean(row?.matches?.('.formFieldBaseWrapper'));
+      const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ');
+      const label = normalize((pyrus ? row.querySelector('.formFieldBaseWrapper__titleWrapper')?.textContent : '') || el.getAttribute('aria-label') || labelled || [...(el.labels || [])].map(n => n.textContent).join(' ') || row?.querySelector('label,.field-name,.field-title')?.textContent);
+      const id = row?.getAttribute('data-field-id') || row?.getAttribute('data-fieldid') || '';
+      const editable=el.isContentEditable || el.getAttribute('contenteditable')==='true';
+      const plainPyrusText=pyrus && editable && el.matches('.multiLineInputContent');
+      const scalarChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldRadio__content') && !el.closest('.horizontalMultiInput');
+      const catalogChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldCatalog__content,.formFieldCatalog__mainContent') && !el.closest('.horizontalMultiInput');
+      const kind = plainPyrusText ? 'pyrus-text' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
+      const unsupported = !scalarChoice && !catalogChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
+      const value = ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : el.value;
+      const groups=pyrus ? groupPath(row) : [];
+      const path=groups.join(' / ');
+      const key = id ? `field:${id}:${kind}` : label ? `label:${path ? path+' / ' : ''}${label}:${kind}` : '';
+      return { el, key, groups, label: label || (id ? `Поле ${id}` : 'Без названия'), kind, value, unsupported: Boolean(unsupported), radioValue: kind === 'radio' ? el.value : null };
+    }).filter(f => f.key).map(f => ({...f, key: f.kind === 'radio' ? `${f.key}:${f.radioValue}` : f.key}));
+  }
+  const serial = f => { const {el, ...rest} = f; return rest; };
+  function plan(source, overwrite) {
+    const targets = inventory();
+    return source.map(s => {
+      const matches = targets.filter(t => t.key === s.key);
+      const duplicates = source.filter(t => t.key === s.key).length > 1;
+      const target = matches[0];
+      const filled = target && (Array.isArray(target.value) ? target.value.length > 0 : target.value !== '' && target.value !== false);
+      let reason = duplicates || matches.length > 1 ? 'Неоднозначное совпадение' : !target ? 'Поле не найдено после раскрытия — скачайте отчёт' : s.unsupported || target.unsupported ? 'Нестандартное поле: требуется адаптер' : target.kind === 'radio' ? 'Радиогруппа: требуется адаптер' : filled && !overwrite ? 'В целевой задаче уже заполнено' : '';
+      if (!reason && ['select','multi-select'].includes(target.kind)) {
+        const values = Array.isArray(s.value) ? s.value : [s.value];
+        if (values.some(v => ![...target.el.options].some(o => o.value === v))) reason = 'В списке нет исходного значения';
+      }
+      if(!reason && ['pyrus-choice','pyrus-catalog'].includes(target.kind) && s.value==='' && target.value!=='')reason='Очистка списка Pyrus пока не поддерживается';
+      const deferred = !target && !duplicates && !s.unsupported && s.kind !== 'radio';
+      return { key:s.key, label:s.label, value:s.value, reason, deferred, target };
+    });
+  }
+  const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+  function writeNative(el,value) {
+    const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:el.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+  }
+  async function choose(field,value) {
+    const el=field.el,previous=el.value;
+    globalThis.pyrusPickerFailureStructure=null;
+    if(valueText(previous)===valueText(value)){globalThis.pyrusPickerStatus={outcome:'already-matched',kind:field.kind};return;}
+    let panelCount=0,optionCount=0;
+    el.focus();
+    const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
+    if(icon)icon.click();else el.click();
+    writeNative(el,value);
+    try {
+      for(let attempt=0;attempt<(field.kind==='pyrus-catalog'?40:20);attempt++) {
+        await delay(150);
+        const ids=[...(el.getAttribute('aria-owns')||'').split(/\s+/),...(el.getAttribute('aria-controls')||'').split(/\s+/)].filter(Boolean);
+        let panels=ids.map(id=>document.getElementById(id)).filter(Boolean);
+        if(!panels.length){const lists=[...document.querySelectorAll('[role="listbox"]')].filter(visible);if(lists.length===1)panels=lists;}
+        panelCount=panels.length;
+        const optionSelector=field.kind==='pyrus-catalog'?'[role="option"],[role="row"],tbody tr':'[role="option"]';
+        let candidates=[...new Set(panels.flatMap(p=>[...p.querySelectorAll(optionSelector)]))].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true');
+        // A row can contain a role=option; count its clickable item only once.
+        candidates=candidates.filter(o=>!candidates.some(other=>other!==o && o.contains(other)));
+        optionCount=candidates.length;
+        const options=candidates.filter(o=>valueText(o.textContent)===valueText(value) || (field.kind==='pyrus-catalog' && [...o.querySelectorAll('td,[role="cell"],[role="gridcell"]')].some(cell=>valueText(cell.textContent)===valueText(value))));
+        if(options.length>1)throw new Error('choice-ambiguous');
+        if(options.length===1){options[0].click();el.blur();globalThis.pyrusPickerStatus={outcome:'selected',kind:field.kind,panelCount,optionCount};return;}
+      }
+      throw new Error('choice-option-not-found');
+    }catch(e){
+      const reason=['choice-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'picker-error';
+      globalThis.pyrusPickerStatus={outcome:reason,kind:field.kind,panelCount,optionCount};
+      if(globalThis.pyrusStructure)try{globalThis.pyrusPickerFailureStructure=globalThis.pyrusStructure();}catch{}
+      writeNative(el,previous);el.blur();throw e;
+    }
+  }
+  async function setValue(field, value) {
+    const el = field.el;
+    if(['pyrus-choice','pyrus-catalog'].includes(field.kind)){await choose(field,value);return;}
+    if(field.kind==='checkbox'){if(el.checked!==value)el.click();return;}
+    if(field.kind==='pyrus-text'){
+      el.focus();
+      const selection=document.getSelection?.();
+      if(selection && typeof document.execCommand==='function'){
+        const range=document.createRange();range.selectNodeContents(el);selection.removeAllRanges();selection.addRange(range);
+        if(!document.execCommand('insertText',false,String(value)))el.textContent=String(value);
+        selection.removeAllRanges();
+      }else el.textContent=String(value);
+      el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));el.blur();return;
+    }
+    el.focus?.();
+    if (el.tagName === 'SELECT' && el.multiple) [...el.options].forEach(o => { o.selected = value.includes(o.value); });
+    else {
+      const prop = field.kind === 'checkbox' ? 'checked' : 'value';
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : el.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, prop).set.call(el, value);
+    }
+    el.dispatchEvent(new Event('input', {bubbles:true}));
+    el.dispatchEvent(new Event('change', {bubbles:true}));
+    el.blur?.();
+  }
+  globalThis.pyrusTransfer = {
+    diagnose: () => {
+      const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
+      const recognized = inventory();
+      const kinds = {};
+      for (const f of recognized) kinds[f.kind] = (kinds[f.kind] || 0) + 1;
+      const duplicates = recognized.filter(f => recognized.filter(t => t.key === f.key).length > 1).length;
+      // Explicit allowlist: no text, values, HTML, URLs, identifiers or CSS classes.
+      return {
+        totalControls: nodes.length, recognized: recognized.length,
+        unsupported: recognized.filter(f => f.unsupported).length,
+        ambiguousControls: duplicates, kinds,
+        picker:globalThis.pyrusPickerStatus || null,
+        frames: document.querySelectorAll('iframe').length,
+        truncated: nodes.length > 200,
+        controls: nodes.slice(0,200).map((el,index) => ({
+          index,
+          tag: ['INPUT','TEXTAREA','SELECT'].includes(el.tagName) ? el.tagName : 'EDITABLE',
+          type: ['text','number','date','datetime-local','email','tel','url','checkbox','radio','hidden','password','file','search','submit','button','reset','time','month','week','range','color'].includes(el.type) ? el.type : 'other',
+          visible: Boolean(el.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden',
+          disabled: Boolean(el.disabled), readOnly: Boolean(el.readOnly),
+          hasLabel: Boolean(el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.labels?.length),
+          hasFieldContainer: Boolean(el.closest(rowSelector)),
+          recognized: recognized.some(f => f.el === el)
+        }))
+      };
+    },
+    capture: () => inventory().map(serial),
+    preview: (source, overwrite) => plan(source, overwrite).map(({target,...r}) => r),
+    apply: async (source, keys, overwrite) => {
+      const result = [];
+      const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
+      const waitForUpdate = (catalog=false) => new Promise(resolve => {
+        if (typeof MutationObserver === 'undefined') { setTimeout(resolve,300); return; }
+        let quiet, deadline;
+        const finish = () => { observer.disconnect(); clearTimeout(quiet); clearTimeout(deadline); resolve(); };
+        const observer = new MutationObserver(() => { clearTimeout(quiet); quiet = setTimeout(finish,catalog?700:250); });
+        observer.observe(document.body,{childList:true,subtree:true,attributes:true,characterData:true});
+        quiet=setTimeout(finish,catalog?1000:300);deadline=setTimeout(finish,catalog?6000:1500);
+      });
+      // Source inventory is in document order, regardless of selection/search order in the popup.
+      const ordered = source.filter(f => keys.includes(f.key)).map(f => f.key);
+      const groupTitles=[...new Set(source.flatMap(f=>f.groups || []))];
+      // A selected dependent field must not bypass an earlier differing picker.
+      const lastSelected=source.reduce((last,f,i)=>keys.includes(f.key)?i:last,-1);
+      const requiredPickers=source.slice(0,lastSelected+1).filter(f=>['pyrus-catalog','pyrus-choice'].includes(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
+      for(const controller of requiredPickers){
+        const p=plan(source,overwrite).find(p=>p.key===controller.key);
+        if(!p?.target || valueText(p.target.value)!==valueText(controller.value))return [{label:controller.label,status:'blocked',reason:'unselected-controller',message:'Сначала перенесите этот справочник/список: выберите его и при необходимости включите замену заполненных значений. Зависимые поля не изменены.'}];
+      }
+      let blocked=false;
+      for (const key of ordered) {
+        if(blocked){result.push({label:source.find(f=>f.key===key)?.label || 'Поле',status:'blocked',reason:'blocked-by-picker',message:'Не заполнено: предыдущий справочник или список не удалось перенести. Исправьте его и повторите перенос.'});continue;}
+        let p = plan(source, overwrite).find(p => p.key === key);
+        // Conditional controls may mount asynchronously after an earlier input/change.
+        if (p?.deferred) {
+          for(let attempt=0;attempt<6 && p.deferred;attempt++) {
+            await pause(250);
+            if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles});
+            p=plan(source,overwrite).find(p=>p.key===key);
+          }
+        }
+        if (!p || p.reason) {
+          result.push({label:p?.label || 'Поле',status:'skipped',reason:p?.reason || 'missing',message:p?.deferred?'Поле не появилось после заполнения предыдущих. Проверьте условие отображения.':p?.reason || 'Не найдено'});
+          const original=source.find(f=>f.key===key);
+          if(['pyrus-catalog','pyrus-choice'].includes(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;
+          continue;
+        }
+        try {
+          await setValue(p.target, p.value);
+          await waitForUpdate(p.target.kind==='pyrus-catalog');
+          if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles});
+          const current = inventory().filter(f => f.key === key);
+          const accepted = current.length === 1 && JSON.stringify(current[0].value) === JSON.stringify(p.value);
+          if(!accepted && ['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true;
+          result.push({label:p.label,status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
+        }
+        catch (e) { if(['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
+      }
+      return result;
+    }
+  };
+})();
