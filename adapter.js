@@ -15,14 +15,15 @@
     }
     return labels.filter(Boolean);
   }
-  function inventory() {
-    const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
+  function inventory(source=false) {
+    const nodes = [...document.querySelectorAll(source?'input,textarea,select,[contenteditable="true"],.multiLineInputContent,.formFieldSimpleView,.horizontalMultiInput':'input,textarea,select,[contenteditable="true"]')];
     const pyrusPage=Boolean(document.querySelector?.('.formFieldBaseWrapper'));
     const fields=nodes.filter(el => !el.closest('[role="dialog"]') &&
       !el.closest('.copyToClipboard,.viewTableSearch,.formCell,.CommentSection,nav,[role="search"]') &&
       (!pyrusPage || el.closest('.formFieldBaseWrapper')) &&
       !['hidden','password','file','submit','button','reset','search'].includes(el.type) &&
-      !el.disabled && !el.readOnly && !el.closest('.checkbox_disabled') &&
+      (source || (!el.disabled && !el.readOnly && !el.closest('.checkbox_disabled'))) &&
+      (!source || !el.closest('.horizontalMultiInput') || el.matches('.horizontalMultiInput')) &&
       (visible(el) || (el.type==='checkbox' && visible(el.closest('.checkbox'))))).map(el => {
       const row = el.closest(rowSelector);
       const pyrus=Boolean(row?.matches?.('.formFieldBaseWrapper'));
@@ -31,15 +32,15 @@
       const label = normalize(title?.textContent || el.getAttribute('aria-label') || labelled || [...(el.labels || [])].map(n => n.textContent).join(' ') || row?.querySelector('label,.field-name,.field-title')?.textContent);
       const id = row?.getAttribute('data-field-id') || row?.getAttribute('data-fieldid') || '';
       const editable=el.isContentEditable || el.getAttribute('contenteditable')==='true';
-      const plainPyrusText=pyrus && editable && el.matches('.multiLineInputContent');
-      const multiChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.horizontalMultiInput') && el.closest('.formFieldRadio__content');
-      const singleCombo=pyrus && el.getAttribute('role')==='combobox' && !el.closest('.horizontalMultiInput');
+      const plainPyrusText=pyrus && (editable||source) && el.matches('.multiLineInputContent');
+      const multiChoice=pyrus && ((el.getAttribute('role')==='combobox' && el.closest('.horizontalMultiInput') && el.closest('.formFieldRadio__content')) || (source && el.matches('.horizontalMultiInput') && Boolean(row.querySelector('.formFieldRadio__button,.formFieldRadio__content'))));
+      const singleCombo=pyrus && (el.getAttribute('role')==='combobox' || (source && el.matches('.formFieldSimpleView') && (el.matches('.formFieldInputCompletion') || row.querySelector('.formFieldRadio__button')))) && !el.closest('.horizontalMultiInput');
       const personChoice=singleCombo && row.querySelector('.personFieldAvatar,.formFieldInputCompletion__personAvatar');
       const scalarChoice=singleCombo && !personChoice;
       const catalogChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldCatalog__content,.formFieldCatalog__mainContent') && !el.closest('.horizontalMultiInput');
       const kind = multiChoice ? 'pyrus-multi-choice' : plainPyrusText ? 'pyrus-text' : personChoice ? 'pyrus-person' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
-      const unsupported = !multiChoice && !scalarChoice && !catalogChoice && !personChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
-      const value = multiChoice ? tokens(el.closest('.horizontalMultiInput')) : ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : el.value;
+      const unsupported = (source && pyrus && el.matches('.horizontalMultiInput') && !multiChoice) || !multiChoice && !scalarChoice && !catalogChoice && !personChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
+      const value = multiChoice ? tokens(el.closest('.horizontalMultiInput')) : ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : source && pyrus && el.matches('.formFieldSimpleView') ? (el.querySelector('.formFieldSimpleView__placeholder')?'':valueText(el.textContent)) : el.value;
       const groups=pyrus ? groupPath(row) : [];
       const path=groups.join(' / ');
       const key = id ? `field:${id}:${kind}` : label ? `label:${path ? path+' / ' : ''}${label}:${kind}` : '';
@@ -268,9 +269,9 @@
         }))
       };
     },
-    capture: () => inventory().map(serial),
+    capture: () => inventory(true).map(serial),
     captureTables: async () => {
-      const baseline=inventory();
+      const baseline=inventory(true);
       const tables=await globalThis.pyrusTables.prepareCapture();
       // Keep the source order and the data read while each table was rendered.
       return baseline.map(f=>serial(f.kind==='pyrus-table'&&tables.has(f.el)?{...f,value:tables.get(f.el),unsupported:!tables.get(f.el).columns.length}:f));

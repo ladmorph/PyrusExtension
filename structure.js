@@ -27,8 +27,8 @@
       const seeds=[...new Set([...popup,...panelNodes,...tableNodes.slice(0,60),...all])];
       // Dedicated component trees cannot be displaced by unrelated page controls.
       // Read structural metadata only, including selected-token wrappers and cell editors.
-      function components(selector) {
-        const roots=[...doc.querySelectorAll(selector)];
+      function components(selector,filter=()=>true) {
+        const roots=[...doc.querySelectorAll(selector)].filter(filter);
         return {total:roots.length,truncated:roots.length>30,items:roots.slice(0,30).map((root,index)=>{
           let remaining=1200,truncated=false;
           function walk(el,depth){
@@ -55,7 +55,7 @@
           children:[...el.children].slice(0,40).map(describe),childrenTruncated:el.children.length>40,
           siblings:[...(el.parentElement?.children||[])].slice(0,40).map(describe)};
       })};
-      return {tableDiscovery,components:{tables:components('.viewTableFieldNew'),multiValue:components('.horizontalMultiInput')},total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
+      return {tableDiscovery,components:{tables:components('.viewTableFieldNew'),multiValue:components('.horizontalMultiInput'),readOnlyFields:components('.formFieldBaseWrapper',root=>Boolean(root.querySelector?.('.formFieldBaseWrapper__content_locked,.formFieldSimpleView')))},total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
         const ancestors=[];let parent=el.parentElement;
         for(let i=0;parent&&i<7;i++,parent=parent.parentElement)ancestors.push(describe(parent));
         const ids=(el.getAttribute('aria-controls')||'').split(/\s+/).filter(Boolean);

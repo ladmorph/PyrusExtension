@@ -387,3 +387,14 @@ test('captures expanded titles independently of fields and leaves collapsed sour
  let clicks=0;w.document.querySelectorAll('.formFieldGroupTitle').forEach(el=>el.onclick=()=>clicks++);
  const titles=w.pyrusExpand.openedTitles();assert.equal(titles.length,1);assert.equal(titles[0],'Открытая');assert.equal(clicks,0);w.close();
 });
+
+test('closed source reads disabled fields and view-only values without enabling target writes',()=>{
+ const wrap=(name,html)=>`<div class="formField"><div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__content_locked"><div class="formFieldBaseWrapper__titleWrapper"><span class="formFieldTitle__textValue">${name}</span></div>${html}</div></div></div>`;
+ const w=page(wrap('Дата','<input disabled value="02.11.2026">')+wrap('Флаг','<div class="checkbox checkbox_disabled"><input disabled type="checkbox" checked></div>')+wrap('Текст','<div class="multiLineInputContent" contenteditable="false">Описание</div>')+wrap('Система','<div class="formFieldSimpleView formFieldInputCompletion">Система А</div>')+wrap('Методы','<div class="horizontalMultiInput"><div class="multiInputToken"><span class="token__text">GET</span></div><div class="multiInputToken"><span class="token__text">POST</span></div><div style="display:none"><div class="formFieldSimpleView formFieldInputCompletion"><span class="formFieldSimpleView__placeholder">Выберите</span></div></div></div><button class="formFieldRadio__button"></button>'));
+ let changes=0;w.document.addEventListener('input',()=>changes++);w.document.addEventListener('click',()=>changes++);
+ const fields=w.pyrusTransfer.capture();assert.equal(fields.length,5);
+ assert.deepEqual(JSON.parse(JSON.stringify(fields.map(f=>f.value))),['02.11.2026',true,'Описание','Система А',['GET','POST']]);
+ assert.equal(fields[3].kind,'pyrus-choice');assert.equal(fields[4].kind,'pyrus-multi-choice');
+ assert.ok(w.pyrusTransfer.preview(fields,true).every(f=>f.reason));assert.equal(changes,0);
+ w.close();
+});
