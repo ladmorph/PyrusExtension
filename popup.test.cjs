@@ -7,6 +7,7 @@ test('popup diagnostics survives reopen and exports a report without page data',
   const elements=Object.fromEntries(ids.map(id=>[id,{id,disabled:false,children:[],classList:{toggle(){}},querySelectorAll:()=>[],replaceChildren(){},append(){},value:'',checked:false}]));
   const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:'https://secret.example/task/123?token=SECRET',fields:[{key:'label:SECRET_NAME:text',label:'SECRET_NAME',kind:'text',value:'SECRET_VALUE'}]}};
   const storage={async get(keys){return typeof keys==='string'?{[keys]:saved[keys]}:{...saved};},async set(obj){Object.assign(saved,obj);},async remove(keys){for(const k of Array.isArray(keys)?keys:[keys])delete saved[k];}};
+  saved.snapshot.sourceStructure={main:{samples:[{element:{tag:'TD',classes:['formCell']}}]}};
   let blob,downloaded=false;
   class TestURL extends URL { static createObjectURL(b){blob=b;return 'blob:test';} static revokeObjectURL(){} }
   const context={document:{getElementById:id=>elements[id],querySelectorAll:()=>ids.map(id=>elements[id]).filter(e=>['capture','preview','apply','diagnose','export','clearLogs','clear','selectAll','selectNone'].includes(e.id)),createElement:()=>({click(){downloaded=true;}})},chrome:{storage:{session:storage},runtime:{getManifest:()=>({version:'0.2.0'})},tabs:{query:async()=>[{id:1,url:'https://secret.example/task/123'}]},scripting:{executeScript:async opts=>opts.files?[]:[{result:{url:'https://secret.example/task/123',data:{},diagnostic:{totalControls:4,recognized:2}}}]}},navigator:{userAgent:'TestBrowser'},URL:TestURL,Blob,setTimeout:()=>0};
@@ -21,6 +22,10 @@ test('popup diagnostics survives reopen and exports a report without page data',
   assert.ok(downloaded);
   const text=await blob.text(), report=JSON.parse(text);
   assert.equal(report.source.count,1);
+  assert.equal(report.structures.source.main.samples[0].element.tag,'TD');
+  assert.equal(report.structures.sourceMissing,false);
+  assert.equal(report.structures.status,'captured');
+  assert.ok(report.structures.target);
   assert.equal(report.lastPage.recognized,2);
   assert.ok(!text.includes('SECRET'));
   assert.ok(!text.includes('secret.example'));

@@ -50,6 +50,11 @@
       }
       const relevant=()=>candidates().filter(needed);
       const report={eligibleBefore:relevant().length,totalEligibleBefore:candidates().length,requestedTitleCount:allowed.length,mode:selective?'selected-target-groups':'all-target-groups',clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
+      if(!report.eligibleBefore){
+        report.unmatchedTitleCount=allowed.filter(name=>![...document.querySelectorAll('.formFieldGroupTitle')].some(el=>titleText(el)===name)).length;
+        report.unrelatedCollapsed=candidates().length;report.elapsedMs=Date.now()-started;
+        return report;
+      }
       // Several passes discover nested sections that mount after a parent opens.
       for(let pass=0;pass<8;pass++) {
         const pending=relevant().filter(el=>!attempted.has(el));

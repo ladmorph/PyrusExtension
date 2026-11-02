@@ -27,7 +27,7 @@ async function page(method,args=[],expectedTab){
    const before=m==='apply'?globalThis.pyrusTransfer.diagnose(prepare.sourceFields):null;
    const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
    const data=m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
-   return {url:location.href,data,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
+   return {url:location.href,data,sourceStructure:m==='capture'?globalThis.pyrusStructure():undefined,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
  },args:[method,args,{sourceUrl:snapshot?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
  if(!response?.result)throw new Error('Нет ответа от страницы. Обновите вкладку.');
  lastPage=response.result.diagnostic;await storage.set({lastPage});await record(method,{page:lastPage});
@@ -59,7 +59,7 @@ function action(id,fn){$(id).onclick=async()=>{
 action('capture',async()=>{
  reset();const result=await page('capture');
  if(!result.data.length)throw new Error('В открытых разделах поля не найдены. Включите редактирование. Скачайте отчёт — для этой разметки нужен адаптер.');
- snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data,expandedGroups:result.sourceSections||[]};await storage.set({snapshot});await loadSource();
+ snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data,sourceStructure:result.sourceStructure||null,expandedGroups:result.sourceSections||[]};await storage.set({snapshot});await loadSource();
  status('Поля сохранены. Перейдите в другую задачу того же шаблона.');
 });
 action('preview',async()=>{
@@ -136,8 +136,13 @@ action('recorderStop',async()=>{
 });
 action('recorderDiscard',async()=>{await page('recorderDiscard');status('Запись справочника остановлена и удалена из памяти страницы.');});
 action('export',async()=>{
+ let targetStructure=null,structureStatus='unavailable';
+ const previousPage=lastPage;
+ try{const current=await page('structure');if(current.url!==snapshot?.url){targetStructure=current.data;structureStatus='captured';}else{structureStatus='source-is-active';}}catch{structureStatus='capture-failed';}
  await record('export');
  const report={format:'pyrus-transfer-debug',schemaVersion:1,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,browser:navigator.userAgent,source:snapshot?{count:snapshot.fields.length,kinds:snapshot.fields.reduce((a,f)=>(a[f.kind]=(a[f.kind]||0)+1,a),{})}:null,lastPage,lastPlan,events:diagnostics};
+ report.structures={source:snapshot?.sourceStructure||null,target:targetStructure,status:structureStatus,sourceMissing:!snapshot?.sourceStructure};
+ report.lastTransferPage=previousPage;
  const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
  const a=document.createElement('a');a.href=url;a.download='pyrus-debug-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
  status('Отчёт скачан. Приложите JSON к сообщению и опишите ожидаемый результат.');

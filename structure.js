@@ -23,7 +23,8 @@
       const linked=[...new Set(all.flatMap(el=>['aria-owns','aria-controls'].flatMap(name=>(el.getAttribute(name)||'').split(/\s+/).filter(Boolean).map(id=>doc.getElementById(id)).filter(Boolean))))];
       const panelNodes=linked.flatMap(panel=>[panel,...panel.querySelectorAll('*')].slice(0,100));
       const popup=all.filter(el=>['listbox','option','row'].includes(el.getAttribute('role')) || el.matches?.('.inputCompletion__popup,.completionTableMenuItem,.completionMenuItem'));
-      const seeds=[...new Set([...popup,...panelNodes,...all])];
+      const tableNodes=[...doc.querySelectorAll('table,thead,tbody,tr,th,td,.formCell,[role="grid"],[role="gridcell"],[role="cell"]')];
+      const seeds=[...new Set([...popup,...panelNodes,...tableNodes.slice(0,60),...all])];
       return {total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
         const ancestors=[];let parent=el.parentElement;
         for(let i=0;parent&&i<7;i++,parent=parent.parentElement)ancestors.push(describe(parent));

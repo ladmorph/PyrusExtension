@@ -253,6 +253,9 @@
           continue;
         }
         try {
+          if(JSON.stringify(p.target.value)===JSON.stringify(p.value)){
+            result.push({label:p.label,status:'dispatched',reason:'already-matched',message:'Значение уже совпадает с источником.'});continue;
+          }
           await setValue(p.target, p.value);
           await waitForUpdate(p.target.kind==='pyrus-catalog');
           if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});

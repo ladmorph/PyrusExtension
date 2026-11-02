@@ -12,6 +12,11 @@ function fixture(){
  }
  return {api:context.pyrusExpand,node};
 }
+test('no eligible sections returns without scheduling waits',async()=>{
+ const context={document:{querySelectorAll:()=>[]},getComputedStyle:()=>({visibility:'visible'}),setTimeout:()=>{throw new Error('Unexpected wait');}};
+ vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/expander.js','utf8'),context);
+ const report=await context.pyrusExpand.run({groupTitles:[]});assert.equal(report.clicked,0);assert.equal(report.remaining,0);
+});
 test('opens nested sections and never collapses open sections',async()=>{
  const f=fixture();let nested;
  const parent=f.node('parent',{onClick:()=>{nested=f.node('child');}});
