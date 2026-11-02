@@ -16,7 +16,7 @@
     return labels.filter(Boolean);
   }
   function inventory(source=false) {
-    const nodes = [...document.querySelectorAll(source?'input,textarea,select,[contenteditable="true"],.multiLineInputContent,.formFieldSimpleView,.horizontalMultiInput':'input,textarea,select,[contenteditable="true"]')];
+    const nodes = [...document.querySelectorAll(source?'input,textarea,select,[contenteditable="true"],.multiLineInputContent,.formFieldSimpleView,.horizontalMultiInput,.formFieldPersonView':'input,textarea,select,[contenteditable="true"]')];
     const pyrusPage=Boolean(document.querySelector?.('.formFieldBaseWrapper'));
     const fields=nodes.filter(el => !el.closest('[role="dialog"]') &&
       !el.closest('.copyToClipboard,.viewTableSearch,.formCell,.CommentSection,nav,[role="search"]') &&
@@ -35,12 +35,13 @@
       const plainPyrusText=pyrus && (editable||source) && el.matches('.multiLineInputContent');
       const multiChoice=pyrus && ((el.getAttribute('role')==='combobox' && el.closest('.horizontalMultiInput') && el.closest('.formFieldRadio__content')) || (source && el.matches('.horizontalMultiInput') && Boolean(row.querySelector('.formFieldRadio__button,.formFieldRadio__content'))));
       const singleCombo=pyrus && (el.getAttribute('role')==='combobox' || (source && el.matches('.formFieldSimpleView') && (el.matches('.formFieldInputCompletion') || row.querySelector('.formFieldRadio__button')))) && !el.closest('.horizontalMultiInput');
-      const personChoice=singleCombo && row.querySelector('.personFieldAvatar,.formFieldInputCompletion__personAvatar');
+      const personView=source && pyrus && el.matches('.formFieldPersonView');
+      const personChoice=personView || (singleCombo && row.querySelector('.personFieldAvatar,.formFieldInputCompletion__personAvatar'));
       const scalarChoice=singleCombo && !personChoice;
       const catalogChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldCatalog__content,.formFieldCatalog__mainContent') && !el.closest('.horizontalMultiInput');
       const kind = multiChoice ? 'pyrus-multi-choice' : plainPyrusText ? 'pyrus-text' : personChoice ? 'pyrus-person' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
       const unsupported = (source && pyrus && el.matches('.horizontalMultiInput') && !multiChoice) || !multiChoice && !scalarChoice && !catalogChoice && !personChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
-      const value = multiChoice ? tokens(el.closest('.horizontalMultiInput')) : ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : source && pyrus && el.matches('.formFieldSimpleView') ? (el.querySelector('.formFieldSimpleView__placeholder')?'':valueText(el.textContent)) : el.value;
+      const value = personView ? valueText(el.querySelector('.avatarWithTextContent')?.textContent) : multiChoice ? tokens(el.closest('.horizontalMultiInput')) : ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : source && pyrus && el.matches('.formFieldSimpleView') ? (el.querySelector('.formFieldSimpleView__placeholder')?'':valueText(el.textContent)) : el.value;
       const groups=pyrus ? groupPath(row) : [];
       const path=groups.join(' / ');
       const key = id ? `field:${id}:${kind}` : label ? `label:${path ? path+' / ' : ''}${label}:${kind}` : '';

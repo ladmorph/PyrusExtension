@@ -398,3 +398,15 @@ test('closed source reads disabled fields and view-only values without enabling 
  assert.ok(w.pyrusTransfer.preview(fields,true).every(f=>f.reason));assert.equal(changes,0);
  w.close();
 });
+
+test('closed-task person view captures only name and transfers to empty person picker',async()=>{
+ const wrap=body=>`<div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__titleWrapper"><span class="formFieldTitle__textValue">Ответственный за проверку результата</span></div>${body}</div>`;
+ const source=page(wrap('<span class="formFieldPersonView"><span class="avatarWithTextImage"><div class="personFieldAvatar"><div class="avatarInitials">ИТ</div></div></span><span class="avatarWithTextContent">Иван Тестовый</span></span>'));
+ let clicks=0;source.document.addEventListener('click',()=>clicks++);
+ const fields=source.pyrusTransfer.capture();assert.equal(fields.length,1);assert.equal(fields[0].kind,'pyrus-person');assert.equal(fields[0].value,'Иван Тестовый');assert.equal(clicks,0);
+ assert.ok(source.pyrusTransfer.preview(fields,true)[0].reason);
+ const target=page(wrap('<input role="combobox" aria-controls="people">')+'<div id="people" class="inputCompletion__popup"><div class="completionMenuItem"><span class="completionMenuItem__name">Иван Тестовый</span></div></div>');
+ target.document.querySelector('.completionMenuItem__name').onclick=()=>{target.document.querySelector('input').value='Иван Тестовый';};
+ const result=await target.pyrusTransfer.apply(fields,[fields[0].key],true);
+ assert.equal(result[0].status,'dispatched');assert.equal(target.document.querySelector('input').value,'Иван Тестовый');source.close();target.close();
+});
