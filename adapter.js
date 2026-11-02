@@ -105,7 +105,7 @@
   }
   function activateOption(option,value,catalog){
     const cells=catalog?[...option.querySelectorAll('td,[role="cell"],[role="gridcell"]')].filter(visible):[];
-    const target=cells.find(cell=>valueText(cell.textContent)===valueText(value)) || cells[0] || option.querySelector('.completionMenuItem__name') || option;
+    const target=cells.find(cell=>valueText(cell.textContent)===valueText(value)) || cells[0] || option.querySelector('.dropdownList__itemTextContent') || option.querySelector('.dropdownList__itemText') || option.querySelector('.completionMenuItem__name') || option;
     target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'mouse',button:0}));
     target.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0}));
     target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'mouse',button:0}));
@@ -115,6 +115,7 @@
   async function choose(field,value) {
     const el=field.el,previous=el.value;
     const tableChoice=el.matches('.cellRadioButton__input');
+    const popupSelector=tableChoice?'.cellRadioButton__popuper':'.inputCompletion__popup';
     globalThis.pyrusPickerStatus={outcome:'opening',kind:field.kind,tableChoice};
     const closePicker=()=>{
       el.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',bubbles:true}));
@@ -124,7 +125,7 @@
     globalThis.pyrusPickerFailureStructure=null;
     if(field.kind!=='pyrus-multi-choice' && valueText(previous)===valueText(value)){globalThis.pyrusPickerStatus={outcome:'already-matched',kind:field.kind};return;}
     let panelCount=0,optionCount=0;
-    const existingPopups=new Set([...document.querySelectorAll('.inputCompletion__popup')].filter(visible));
+    const existingPopups=new Set([...document.querySelectorAll(popupSelector)].filter(visible));
     el.focus();
     const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
     if(icon)icon.click();else if(tableChoice)activateOption(el,value,false);else el.click();
@@ -138,7 +139,7 @@
         const ids=[...(el.getAttribute('aria-owns')||'').split(/\s+/),...(el.getAttribute('aria-controls')||'').split(/\s+/)].filter(Boolean);
         let panels=ids.map(id=>document.getElementById(id)).filter(p=>p&&visible(p));
         if(!panels.length){
-          let popups=[...document.querySelectorAll('.inputCompletion__popup')].filter(visible);
+          let popups=[...document.querySelectorAll(popupSelector)].filter(visible);
           if(popups.length>1){
             const opened=popups.filter(p=>!existingPopups.has(p));
             if(opened.length===1)popups=opened;
@@ -148,12 +149,12 @@
           else if(!popups.length){const lists=[...document.querySelectorAll('[role="listbox"]')].filter(visible);if(lists.length===1)panels=lists;}
         }
         panelCount=panels.length;
-        const optionSelector=field.kind==='pyrus-catalog'?'.completionTableMenuItem,[role="option"],[role="row"],tbody tr':'.completionMenuItem,[role="option"]';
+        const optionSelector=tableChoice?'.dropdownList__control,[role="option"]':field.kind==='pyrus-catalog'?'.completionTableMenuItem,[role="option"],[role="row"],tbody tr':'.completionMenuItem,[role="option"]';
         let candidates=[...new Set(panels.flatMap(p=>[...p.querySelectorAll(optionSelector)]))].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true');
         // A row can contain a role=option; count its clickable item only once.
         candidates=candidates.filter(o=>!candidates.some(other=>other!==o && o.contains(other)));
         optionCount=candidates.length;
-        const options=candidates.filter(o=>matchOption(o,value,field.kind==='pyrus-catalog'));
+        const options=candidates.filter(o=>!o.disabled && (tableChoice?valueText((o.querySelector('.dropdownList__itemTextContent')||o.querySelector('.dropdownList__itemText')||o).textContent)===valueText(value):matchOption(o,value,field.kind==='pyrus-catalog')));
         if(options.length>1)throw new Error('choice-ambiguous');
         if(options.length===1){activateOption(options[0],value,field.kind==='pyrus-catalog');await delay(200);closePicker();globalThis.pyrusPickerStatus={outcome:'selected',kind:field.kind,panelCount,optionCount};return;}
       }

@@ -44,7 +44,7 @@
       const row=state.rowIndex===null?null:rows(root)[state.rowIndex];
       const cell=row&&state.columnIndex!==null?cells(row)[state.columnIndex]:null;
       const scope=cell||row||root;
-      const nodes=[scope,...scope.querySelectorAll(cell?'*':'tbody,tr,.addRowButton,input,[contenteditable]'),...document.querySelectorAll('.inputCompletion__popup,[role="listbox"]')].slice(0,40);
+      const nodes=[scope,...scope.querySelectorAll(cell?'*':'tbody,tr,.addRowButton,input,[contenteditable]'),...document.querySelectorAll('.inputCompletion__popup,.cellRadioButton__popuper,.cellRadioButton__popuper .dropdownList__control,[role="listbox"]')].slice(0,40);
       globalThis.pyrusTableStatus.context=nodes.map(el=>({tag:el.tagName,classes:[...el.classList].slice(0,8),visible:Boolean(visible(el)),children:el.children.length,disabled:Boolean(el.disabled),readOnly:Boolean(el.readOnly)}));
       globalThis.pyrusTableStatus.renderedRows=rows(root).length;
     };

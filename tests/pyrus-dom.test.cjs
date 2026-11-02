@@ -3,6 +3,13 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('recorded table dropdown markup selects the exact text span without ARIA roles',async()=>{
+ const w=page(tableFixture(['Протокол'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
+ const input=w.document.querySelector('td input');let clicks=0;
+ input.onclick=()=>{w.document.body.insertAdjacentHTML('beforeend','<div class="cellRadioButton__popuper"><ul class="dropdownList cellRadioButton__dropdownList"><li class="dropdownList__item"><button class="baseButton dropdownList__control"><span class="dropdownList__itemColumn"><span class="dropdownList__itemTextContainer"><span class="dropdownList__itemText"><span class="dropdownList__itemTextContent">TCP</span></span></span></span></button></li></ul></div>');w.document.querySelector('.dropdownList__itemTextContent').onclick=()=>{clicks++;input.value='TCP';};};
+ const [source]=w.pyrusTransfer.capture();source.value.rows=[['TCP']];
+ const [result]=await w.pyrusTransfer.apply([source],[source.key],true);assert.equal(result.status,'dispatched');assert.equal(clicks,1);w.close();
+});
 test('table picker failure keeps its precise reason and picker status',async()=>{
  const w=page(tableFixture(['Выбор'],[['']])+row('После','<input>'));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
  const source=w.pyrusTransfer.capture();source[0].value.rows=[['Нет варианта']];source[1].value='Продолжить';
@@ -26,7 +33,7 @@ test('table dropdown opens on pointerdown without typing into display input',asy
  const w=page(tableFixture(['Выбор'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
  const input=w.document.querySelector('td input');let writes=0,chosen=0;
  input.addEventListener('input',()=>writes++);
- input.addEventListener('pointerdown',()=>{if(w.document.querySelector('.inputCompletion__popup'))return;w.document.body.insertAdjacentHTML('beforeend','<div class="inputCompletion__popup"><div role="option">Вариант</div></div>');w.document.querySelector('[role=option]').onclick=()=>{input.value='Вариант';chosen++;};});
+ input.addEventListener('pointerdown',()=>{if(w.document.querySelector('.cellRadioButton__popuper'))return;w.document.body.insertAdjacentHTML('beforeend','<div class="cellRadioButton__popuper"><div role="option">Вариант</div></div>');w.document.querySelector('[role=option]').onclick=()=>{input.value='Вариант';chosen++;};});
  const [source]=w.pyrusTransfer.capture();source.value.rows=[['Вариант']];
  const [result]=await w.pyrusTransfer.apply([source],[source.key],true);
  assert.equal(result.status,'dispatched');assert.equal(chosen,1);assert.equal(writes,0);w.close();
