@@ -17,23 +17,25 @@ async function page(method,args=[],expectedTab){
  const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
  if(!tab?.id || !/^https?:/.test(tab.url||''))throw new Error('Откройте задачу Pyrus в обычной вкладке.');
  if(expectedTab && tab.id!==expectedTab)throw new Error('Вкладка изменилась. Повторите сопоставление.');
- if(['preview','apply','expand'].includes(method) && snapshot){
+ if(['preview','apply','expand','cellProbeStart'].includes(method) && snapshot){
    if(tab.url===snapshot.url)throw new Error('Открыт источник. Перейдите в целевой черновик — исходная задача не раскрывается.');
    if(new URL(tab.url).origin!==new URL(snapshot.url).origin)throw new Error('Задачи должны быть на одном сервере Pyrus.');
  }
- await chrome.scripting.executeScript({target:{tabId:tab.id},files:['tables.js','adapter.js','expander.js','structure.js','catalog-recorder.js']});
+ await chrome.scripting.executeScript({target:{tabId:tab.id},files:['tables.js','adapter.js','expander.js','structure.js','catalog-recorder.js','cell-probe.js']});
  const [response]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(m,a,prepare)=>{
-   if(prepare.sourceUrl && ['preview','apply','expand'].includes(m) && location.href===prepare.sourceUrl)throw new Error('Открыт источник. Раскрытие отменено.');
+   if(prepare.sourceUrl && ['preview','apply','expand','cellProbeStart'].includes(m) && location.href===prepare.sourceUrl)throw new Error('Открыт источник. Раскрытие отменено.');
+   if(m==='apply' && prepare.targetUrl && location.href!==prepare.targetUrl)throw new Error('Страница изменилась. Повторите заполнение черновика.');
+   if(m==='apply')globalThis.pyrusCellProbe.discard();
    const before=m==='apply'?globalThis.pyrusTransfer.diagnose(prepare.sourceFields):null;
    const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
-   const data=m==='capture'?await globalThis.pyrusTransfer.captureTables():m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
+   const data=m==='cellProbeStart'?globalThis.pyrusCellProbe.start():m==='cellProbeStop'?globalThis.pyrusCellProbe.stop():m==='cellProbeCancel'?globalThis.pyrusCellProbe.discard():m==='capture'?await globalThis.pyrusTransfer.captureTables():m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
    return {url:location.href,data,sourceStructure:m==='capture'?globalThis.pyrusStructure():undefined,sourceSections:m==='capture'?globalThis.pyrusExpand.openedTitles():undefined,diagnostic:{...globalThis.pyrusTransfer.diagnose(prepare.sourceFields),beforeTransfer:before,expansion,sections:globalThis.pyrusExpand.inspect()}};
- },args:[method,args,{sourceUrl:snapshot?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
+ },args:[method,args,{sourceUrl:snapshot?.url || null,targetUrl:previewTab?.url || null,sourceFields:snapshot?.fields || [],groupTitles:snapshot?.expandedGroups || [],fields:snapshot?(method==='apply'?snapshot.fields.filter(f=>args[1].includes(f.key)):snapshot.fields):[]}]});
  if(!response?.result)throw new Error('Нет ответа от страницы. Обновите вкладку.');
  lastPage=response.result.diagnostic;await storage.set({lastPage});await record(method,{page:lastPage});
  return {...response.result,tabId:tab.id};
 }
-function reset(){$('fields').replaceChildren();$('review').hidden=true;$('apply').disabled=true;previewTab=undefined;}
+function reset(){$('fillAll').disabled=busy||!snapshot;$('fields').replaceChildren();$('review').hidden=true;$('apply').disabled=true;previewTab=undefined;}
 async function loadSource(){
  snapshot=(await storage.get('snapshot')).snapshot;
  if(snapshot && snapshot.adapterVersion!=='pyrus-dom-v3'){
@@ -43,6 +45,7 @@ async function loadSource(){
  $('source').textContent=snapshot?snapshot.fields.length+' полей · '+new Date(snapshot.time).toLocaleString('ru-RU'):'Нет сохранённых полей';
 }
 function selection(){
+ $('fillAll').disabled=busy||!snapshot;
  const all=[...$('fields').querySelectorAll('input:not(:disabled)')],n=all.filter(el=>el.checked).length;
  $('counts').textContent='Выбрано '+n+' из '+all.length;
  $('apply').textContent=n?'Заполнить выбранные поля ('+n+')':'Выберите поля для переноса';
@@ -62,6 +65,31 @@ action('capture',async()=>{
  snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data,sourceStructure:result.sourceStructure||null,expandedGroups:result.sourceSections||[]};await storage.set({snapshot});await loadSource();
  status('Поля сохранены. Перейдите в другую задачу того же шаблона.');
 });
+
+action('fillAll',async()=>{
+ reset();await loadSource();if(!snapshot)throw new Error('Сначала сохраните исходные поля.');
+ const keys=snapshot.fields.map(f=>f.key);
+ await record('transfer-start',{selectedIndices:snapshot.fields.map((_,i)=>i),overwrite:$('overwrite').checked,mode:'all'});
+ const target=await page('preview',[snapshot.fields,$('overwrite').checked]);
+ if(!target.diagnostic.recognized)throw new Error('В черновике не распознаны поля. Скачайте отчёт диагностики.');
+ previewTab={id:target.tabId,url:target.url};
+ const result=await page('apply',[snapshot.fields,keys,$('overwrite').checked,snapshot.expandedGroups||[]],target.tabId);
+ await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,table:r.table,matching:r.matching||null}))});
+ const ok=result.data.filter(r=>r.status==='dispatched').length;
+ const rest=result.data.filter(r=>r.status!=='dispatched');reset();
+ status('Готово: '+ok+'. Пропущено или требует проверки: '+rest.length+'. Проверьте результат и сохраните задачу в Pyrus.'+(rest.length?'\n'+rest.map(r=>r.label+': '+r.message).join('\n'):''));
+});
+
+action('cellProbeStart',async()=>{
+ if(!snapshot)throw new Error('Сначала сохраните источник и перейдите в черновик.');
+ await page('cellProbeStart');status('Закройте окно расширения и нажмите проблемную ячейку. Следуйте подсказке на странице.');
+});
+action('cellProbeStop',async()=>{
+ const result=await page('cellProbeStop');if(!result.data)throw new Error('Сначала запустите проверку одной ячейки.');
+ download({extension:chrome.runtime.getManifest().version,...result.data},'pyrus-cell-comparison');
+ status('Сравнение скачано. Пришлите этот файл; повторять перенос всей формы не нужно.');
+});
+action('cellProbeCancel',async()=>{await page('cellProbeCancel');status('Проверка ячейки отменена.');});
 action('preview',async()=>{
  reset();await loadSource();if(!snapshot)throw new Error('Сначала сохраните исходные поля.');
  const result=await page('preview',[snapshot.fields,$('overwrite').checked]);
@@ -80,7 +108,7 @@ action('preview',async()=>{
  const ready=result.data.filter(f=>!f.reason||f.deferred).length,pending=result.data.filter(f=>f.deferred).length;await record('matching',{ready,pending,skipped:result.data.length-ready});
  status('Доступно для выбора: '+ready+' (ожидают появления: '+pending+'). Порядок заполнения — сверху вниз по исходной форме. Проверьте совпадение шаблонов.');
 });
-$('overwrite').onchange=()=>{reset();status('Настройка замены изменена. Повторите сопоставление.');};
+$('overwrite').onchange=()=>{reset();status('Настройка замены изменена. Нажмите «Заполнить черновик».');};
 $('search').oninput=()=>{const q=$('search').value.trim().toLocaleLowerCase('ru');[...$('fields').children].forEach(row=>row.hidden=!row.dataset.label.includes(q));};
 for(const [id,value] of [['selectAll',true],['selectNone',false]])action(id,async()=>{
  $('fields').querySelectorAll('input:not(:disabled)').forEach(el=>{if(!el.closest('label').hidden)el.checked=value;});

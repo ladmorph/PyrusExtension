@@ -37,6 +37,16 @@ test('popup diagnostics survives reopen and exports a report without page data',
   await elements.preview.onclick();
   assert.match(elements.status.textContent,/Перенос заблокирован/);
   assert.equal(elements.apply.disabled,true);
+  const calls=[];
+  context.chrome.scripting.executeScript=async opts=>{
+    if(opts.files)return [];
+    calls.push(opts.args);
+    return [{result:{url:'https://secret.example/task/other',tabId:1,data:opts.args[0]==='apply'?[{status:'dispatched',reason:'dom-value-matched',label:'SECRET_NAME',sourceIndex:0,message:'Готово'}]:[{key:'label:SECRET_NAME:text',label:'SECRET_NAME',reason:''}],diagnostic:{recognized:1}}}];
+  };
+  await elements.fillAll.onclick();
+  assert.deepEqual(calls.map(args=>args[0]),['preview','apply']);
+  assert.equal(calls[1][1][1][0],'label:SECRET_NAME:text');
+  assert.match(elements.status.textContent,/Готово: 1/);
   await elements.clearLogs.onclick();
   assert.equal(saved.diagnostics,undefined);
 });

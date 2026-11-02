@@ -112,6 +112,24 @@
     target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,button:0}));
     target.click();
   }
+  async function openTableChoice(field){
+    const documentFocusedAtStart=document.hasFocus?.()??null;
+    let el=field.el,refreshed=0;
+    const refresh=()=>{const current=field.resolve?.();if(current&&current!==el){el=current;refreshed++;}};
+    el.closest('.formCell')?.querySelector('.cellField__focusTarget')?.focus();
+    await delay(50);refresh();
+    for(const type of ['pointerdown','mousedown','focus','pointerup','mouseup','click']){
+      refresh();if(!el.isConnected)throw Error('table-editor-detached');
+      if(type==='focus')el.focus();
+      else{
+        const rect=el.getBoundingClientRect();
+        const init={bubbles:true,cancelable:true,button:0,buttons:type.endsWith('down')?1:0,clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,pointerType:'mouse',pointerId:1,isPrimary:true};
+        el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,init):new MouseEvent(type,init));
+      }
+      await delay(20);
+    }
+    refresh();return {el,refreshed,documentFocusedAtStart};
+  }
   async function choose(field,value) {
     let el=field.el;
     const previous=el.value;
@@ -131,21 +149,7 @@
     globalThis.pyrusPickerStatus.opening=opening;
     const refresh=()=>{const current=field.resolve?.();if(current&&current!==el){el=current;opening.refreshed++;}};
     if(tableChoice){
-      // Follow browser event order, and reacquire the editor when React replaces it.
-      el.closest('.formCell')?.querySelector('.cellField__focusTarget')?.focus();
-      await delay(50);refresh();
-      for(const type of ['pointerdown','mousedown','focus','pointerup','mouseup','click']){
-        refresh();
-        if(!el.isConnected)throw new Error('table-editor-detached');
-        if(type==='focus')el.focus();
-        else{
-          const rect=el.getBoundingClientRect();
-          const init={bubbles:true,cancelable:true,button:0,buttons:type.endsWith('down')?1:0,clientX:rect.left+rect.width/2,clientY:rect.top+rect.height/2,pointerType:'mouse',pointerId:1,isPrimary:true};
-          el.dispatchEvent(type.startsWith('pointer')?new PointerEvent(type,init):new MouseEvent(type,init));
-        }
-        await delay(20);
-      }
-      refresh();
+      const opened=await openTableChoice(field);el=opened.el;opening.refreshed+=opened.refreshed;opening.documentFocusedAtStart=opened.documentFocusedAtStart;
     }else{
       el.focus();
       const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
@@ -229,6 +233,7 @@
     el.blur?.();
   }
   globalThis.pyrusTransfer = {
+    openTableChoice,
     diagnose: (source=[]) => {
       const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
       const recognized = inventory();

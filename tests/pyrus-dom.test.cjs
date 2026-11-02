@@ -3,6 +3,19 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('single cell probe compares automatic/manual events without reading values and cleans up',async()=>{
+ const w=page(tableFixture(['Колонка'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellField__focusTarget"><input class="cellRadioButton__input" value="PRIVATE_VALUE">';
+ const fastTimer=w.setTimeout.bind(w);w.setTimeout=(fn,ms)=>ms>=180000?0:fastTimer(fn,ms);
+ w.eval(code('cell-probe.js'));const input=w.document.querySelector('.cellRadioButton__input');let opens=0;
+ input.onclick=()=>{opens++;};
+ const start=w.pyrusCellProbe.start();assert.equal(start.phase,'select');input.click();assert.equal(opens,0);
+ for(let i=0;i<14;i++)await new Promise(resolve=>w.setTimeout(resolve,10));
+ assert.equal(opens,1);input.click();
+ await Promise.resolve();const report=w.pyrusCellProbe.stop();
+ assert.equal(report.finishedPhase,'manual');assert.ok(report.events.some(e=>e.phase==='automatic'));assert.ok(report.events.some(e=>e.phase==='manual'));
+ assert.ok(!JSON.stringify(report).includes('PRIVATE_VALUE'));assert.equal(report.automatic.panelCount,0);
+ const count=report.events.length;input.click();assert.equal(report.events.length,count);w.close();
+});
 test('table opener rebinds the input replaced during focus and uses mouse-down buttons',async()=>{
  const w=page(tableFixture(['Выбор'],[['']]));const cell=w.document.querySelector('td');cell.innerHTML='<input class="cellField__focusTarget"><input class="cellRadioButton__input">';
  let opened=0;const old=cell.querySelector('.cellRadioButton__input');
