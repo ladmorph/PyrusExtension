@@ -46,7 +46,7 @@
       return { el, key, groups, fieldId:id, label: label || (id ? `Поле ${id}` : 'Без названия'), kind, value, unsupported: Boolean(unsupported), radioValue: kind === 'radio' ? el.value : null };
     }).filter(f => f.key).map(f => ({...f, key: f.kind === 'radio' ? `${f.key}:${f.radioValue}` : f.key}));
     for(const root of globalThis.pyrusTables?.roots()||[]){
-      const title=root.querySelector('.viewTableFieldNew__title .formFieldTitle__textValue,.viewTableFieldNew__title,.formFieldBaseWrapper__titleWrapper');
+      const title=root.querySelector('.viewTableFieldNew__title .formFieldTitle__textValue') || root.querySelector('.viewTableFieldNew__title') || root.querySelector('.formFieldBaseWrapper__titleWrapper');
       const label=normalize(title?.textContent),groups=groupPath(root),value=globalThis.pyrusTables.data(root);
       if(label)fields.push({el:root,key:`table:${groups.join(' / ')} / ${label}`,label,groups,fieldId:'',kind:'pyrus-table',value,unsupported:!value.columns.length,radioValue:null});
     }

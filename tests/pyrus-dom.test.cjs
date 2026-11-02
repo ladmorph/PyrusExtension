@@ -3,6 +3,19 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('unknown table autocomplete is not filled as arbitrary text',async()=>{
+ const w=page(tableFixture(['A'],[['']])+row('После','<input>'));
+ w.document.querySelector('td').innerHTML='<input aria-autocomplete="list">';
+ const source=w.pyrusTransfer.capture();source[0].value.rows=[['Значение']];source[1].value='Продолжение';
+ const result=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
+ assert.equal(result[0].reason,'table-editor-unsupported');assert.equal(w.document.querySelector('td input').value,'');assert.equal(result[1].status,'dispatched');w.close();
+});
+test('table identity ignores source row counters and surrounding title decorations',async()=>{
+ const html=extra=>'<div class="viewTableFieldNew"><div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__titleWrapper"><button class="formFieldGroupTitle"><div class="viewTableFieldNew__title"><label><span class="formFieldTitle__textValue">Общая таблица</span><span>*</span></label><span>'+extra+'</span></div></button></div><table><thead><tr><th class="headerCell">Колонка</th></tr></thead><tbody><tr class="viewTableRow"><td class="formCell"><div class="cellString__content" contenteditable="true">значение</div></td></tr></tbody></table></div></div>';
+ const src=page(html(' (2) Подсказка источника')),target=page(html(' Подсказка черновика'));
+ const source=await src.pyrusTransfer.captureTables();assert.equal(source[0].label,'Общая таблица');
+ assert.equal(target.pyrusTransfer.preview(source,true)[0].matching.mode,'exact-key');src.close();target.close();
+});
 const tableFixture=(columns,rows=[])=>'<div class="viewTableFieldNew"><div class="formFieldBaseWrapper"><div class="viewTableFieldNew__title">Тестовая таблица</div><table><thead><tr>'+columns.map(c=>'<th class="headerCell">'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.map(values=>'<tr class="viewTableRow">'+values.map(v=>'<td class="formCell"><div class="cellString__content" contenteditable="true">'+v+'</div></td>').join('')+'</tr>').join('')+'</tbody></table><button class="addRowButton">+</button></div></div>';
 test('table choice uses real option selection and confirms the cell',async()=>{
  const w=page(tableFixture(['Действие'],[['']])+'<div id="table-options" role="listbox"><div role="option">Добавить</div></div>');

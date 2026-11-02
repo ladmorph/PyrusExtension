@@ -53,7 +53,8 @@
         let el=cell.querySelector('.cellString__content[contenteditable="true"],input:not(.cellField__focusTarget):not([type="hidden"]),textarea,select');
         if(!el){cell.click();await pause(100);el=cell.querySelector('[contenteditable="true"],input:not(.cellField__focusTarget):not([type="hidden"]),textarea,select');}
         if(!el||el.disabled||el.readOnly)throw Error('table-editor-unsupported');
-        const kind=el.matches('[contenteditable="true"]')?'pyrus-text':el.matches('.cellRadioButton__input,[role="combobox"]')?'pyrus-choice':el.type==='checkbox'?'checkbox':el.tagName==='SELECT'?'select':'text';
+        const kind=el.matches('.cellString__content[contenteditable="true"]')?'pyrus-text':el.matches('.cellRadioButton__input,[role="combobox"]')?'pyrus-choice':el.type==='checkbox'?'checkbox':el.tagName==='SELECT'?'select':el.closest('.cellString__main')&&!el.hasAttribute('aria-autocomplete')?'text':null;
+        if(!kind)throw Error('table-editor-unsupported');
         if(el.closest('.horizontalMultiInput')||el.matches('[type="file"],[type="password"]'))throw Error('table-editor-unsupported');
         await setValue({el,kind},valueToWrite);
         let accepted=false;
