@@ -1,6 +1,7 @@
 (() => {
-  if(globalThis.pyrusCatalogRecorder)return;
-  let running=false, salt='', events=[], pending=[], observer=null, timer=null, field=null, fieldIndex=-1;
+  if(globalThis.pyrusCatalogRecorder?.version==='0.8.5')return;
+  globalThis.pyrusCatalogRecorder?.discard();
+  let running=false, salt='', events=[], pending=[], observer=null, timer=null, field=null, fieldIndex=-1,fieldSelector='.formFieldBaseWrapper';
   let refs=new WeakMap(), next=0, omitted=0, captured=0, startedAt=null;
   const visible=el=>Boolean(el.getClientRects().length)&&getComputedStyle(el).visibility!=='hidden';
   const ref=el=>{if(!refs.has(el))refs.set(el,++next);return refs.get(el);};
@@ -35,7 +36,7 @@
     if(!running)return;
     if(captured>=40){omitted++;return;}
     captured++;
-    if(field && !field.isConnected)field=document.querySelectorAll('.formFieldBaseWrapper')[fieldIndex] || null;
+    if(field && !field.isConnected)field=document.querySelectorAll(fieldSelector)[fieldIndex] || null;
     const roots=[target,field,...added.slice(0,4)].filter(el=>el?.nodeType===1);
     const nodes=new Set();
     for(const root of roots){
@@ -57,15 +58,19 @@
   function handle(event){
     if(!running)return;
     const target=event.target?.nodeType===1?event.target:null;if(!target)return;
+    const cell=target.closest('.formCell');
     const row=target.closest('.formFieldBaseWrapper');
-    if(row?.querySelector('.formFieldCatalog__content,.formFieldCatalog__mainContent')){
+    if(cell?.querySelector('.cellRadioButton__input,.cellCatalog,[role="combobox"]')){
+      fieldSelector='.formCell';field=cell;fieldIndex=[...document.querySelectorAll(fieldSelector)].indexOf(cell);
+    }else if(row?.querySelector('.formFieldCatalog__content,.formFieldCatalog__mainContent')){
+      fieldSelector='.formFieldBaseWrapper';
       field=row;fieldIndex=[...document.querySelectorAll('.formFieldBaseWrapper')].indexOf(row);
     }
     if(!field)return;
-    if(event.type==='keydown'&&!['Enter','Tab','ArrowDown','ArrowUp','Escape'].includes(event.key))return;
+    if(event.type==='keydown'&&!['Enter','Tab','ArrowDown','ArrowUp','Escape','F2'].includes(event.key))return;
     snapshot(event.type==='keydown'?'key:'+event.key:event.type,target);
   }
-  const types=['pointerdown','click','focusin','input','change','focusout','keydown'];
+  const types=['pointerdown','mousedown','dblclick','click','focusin','input','change','focusout','keydown'];
   async function stop(){
     running=false;clearTimeout(timer);observer?.disconnect();observer=null;
     types.forEach(type=>document.removeEventListener(type,handle,true));
@@ -73,6 +78,7 @@
     return {format:'pyrus-catalog-recording',schemaVersion:1,startedAt,endedAt:new Date().toISOString(),running:false,omitted,includesRawValues:false,includesCssClasses:true,events:events.sort((a,b)=>a.time.localeCompare(b.time))};
   }
   globalThis.pyrusCatalogRecorder={
+    version:'0.8.5',
     start:async secretSalt=>{
       if(running)await stop();
       salt=secretSalt;events=[];pending=[];field=null;fieldIndex=-1;refs=new WeakMap();next=0;omitted=0;captured=0;startedAt=new Date().toISOString();running=true;

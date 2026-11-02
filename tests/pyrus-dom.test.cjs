@@ -3,6 +3,17 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('table picker failure keeps its precise reason and picker status',async()=>{
+ const w=page(tableFixture(['Выбор'],[['']])+row('После','<input>'));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
+ const source=w.pyrusTransfer.capture();source[0].value.rows=[['Нет варианта']];source[1].value='Продолжить';
+ const result=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
+ assert.equal(result[0].reason,'choice-option-not-found');assert.equal(result[0].table.picker.outcome,'choice-option-not-found');assert.equal(result[1].status,'dispatched');w.close();
+});
+test('recorder tracks a manual table choice including double click without raw values',async()=>{
+ const w=page(tableFixture(['Колонка'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input" value="SECRET_CHOICE">';w.eval(code('catalog-recorder.js'));
+ await w.pyrusCatalogRecorder.start('test-salt');w.document.querySelector('td input').dispatchEvent(new w.MouseEvent('dblclick',{bubbles:true}));
+ const report=await w.pyrusCatalogRecorder.stop();assert.ok(report.events.some(e=>e.kind==='dblclick'));assert.ok(!JSON.stringify(report).includes('SECRET_CHOICE'));w.close();
+});
 test('target rows are materialized before deciding to add a row',async()=>{
  const w=page(tableFixture(['A']));const root=w.document.querySelector('.viewTableFieldNew');let added=0;
  root.scrollIntoView=()=>{root.querySelector('tbody').innerHTML='<tr class="viewTableRow"><td class="formCell"><div class="cellString__content" contenteditable="true"></div></td></tr>';};
