@@ -167,3 +167,17 @@ test('Pyrus uses only title text and leaves required markers and tooltips out of
  w.document.querySelector('.formFieldBaseWrapper__titleWrapper').innerHTML='<span class="formFieldTitle__textValue">Название</span><span>*</span><span>Подсказка</span>';
  assert.equal(w.pyrusTransfer.capture()[0].label,'Название');w.close();
 });
+test('empty source group metadata opens target sections and exposes the missing catalog',async()=>{
+ const w=page('<div class="formField"><div class="formFieldGroupTitle">Доступы</div><div id="closed" style="display:none">'+row('Система','<div class="formFieldCatalog__content"><input role="combobox" aria-owns="catalog"></div>')+'</div></div><table id="catalog"><tbody><tr><td>Тестовая система</td></tr></tbody></table>');
+ const title=w.document.querySelector('.formFieldGroupTitle');title.onclick=()=>{title.classList.add('formFieldGroupTitle_expanded');w.document.getElementById('closed').style.display='';};
+ const input=w.document.querySelector('input');w.document.querySelector('#catalog td').onclick=()=>{input.value='Тестовая система';w.document.getElementById('catalog').style.display='none';};
+ const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Тестовая система',groups:[]}];
+ assert.equal(w.pyrusTransfer.preview(source,false)[0].deferred,true);
+ const report=await w.pyrusExpand.run({groupTitles:[]});assert.equal(report.clicked,1);assert.equal(report.mode,'all-target-groups');assert.equal(report.requestedTitleCount,0);
+ const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);assert.equal(result.status,'dispatched');w.close();
+});
+test('captures expanded titles independently of fields and leaves collapsed source sections alone',()=>{
+ const w=page('<div class="formField"><div class="formFieldGroupTitle formFieldGroupTitle_expanded"><span class="formFieldTitle__textValue">Открытая</span><span>подсказка</span></div></div><div class="formField"><div class="formFieldGroupTitle">Закрытая</div></div>');
+ let clicks=0;w.document.querySelectorAll('.formFieldGroupTitle').forEach(el=>el.onclick=()=>clicks++);
+ const titles=w.pyrusExpand.openedTitles();assert.equal(titles.length,1);assert.equal(titles[0],'Открытая');assert.equal(clicks,0);w.close();
+});

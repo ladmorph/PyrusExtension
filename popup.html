@@ -1,8 +1,8 @@
 <!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Pyrus · перенос полей</title><link rel="stylesheet" href="style.css"></head><body>
-<header><b class="logo">P ↗</b><div><h1>Перенос полей</h1><small>Pyrus · задачи одного шаблона</small></div><small>v0.7.0</small></header>
+<header><b class="logo">P ↗</b><div><h1>Перенос полей</h1><small>Pyrus · задачи одного шаблона</small></div><small>v0.7.1</small></header>
 <nav id="steps">① Источник → ② Проверка → ③ Заполнение</nav>
 <section><h2>1. Исходная задача</h2><p>Копируются уже открытые поля. Исходная задача не раскрывается.</p><button id="capture">Сохранить поля этой задачи</button><div id="source" class="notice">Нет сохранённых полей</div></section>
-<section><h2>2. Целевой черновик</h2><p>Откройте черновик того же шаблона. Раскроются группы, из которых скопированы поля.</p><button id="preview" class="secondary">Сопоставить поля</button><label class="option"><input type="checkbox" id="overwrite"> Заменять заполненные значения</label>
+<section><h2>2. Целевой черновик</h2><p>Откройте черновик того же шаблона. Разделы раскроются автоматически; если список групп неизвестен, раскроются все доступные группы черновика.</p><button id="preview" class="secondary">Сопоставить поля</button><label class="option"><input type="checkbox" id="overwrite"> Заменять заполненные значения</label>
 <div id="review" hidden><div class="toolbar"><b id="counts"></b><button id="selectAll" class="link">Выбрать все</button><button id="selectNone" class="link">Снять выбор</button></div><input id="search" type="search" placeholder="Найти поле" aria-label="Поиск полей"><div id="fields"></div></div>
 <button id="apply" disabled>Заполнить выбранные поля</button><small>Поля заполняются сверху вниз с ожиданием зависимых полей. Затем проверьте результат и сохраните задачу в Pyrus.</small></section>
 <div id="status" class="notice" role="status" aria-live="polite">Начните с сохранения исходной задачи.</div>

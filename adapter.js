@@ -196,7 +196,7 @@
     },
     capture: () => inventory().map(serial),
     preview: (source, overwrite) => plan(source, overwrite).map(({target,...r}) => r),
-    apply: async (source, keys, overwrite) => {
+    apply: async (source, keys, overwrite, expandedGroups=[]) => {
       const result = [];
       const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
       const waitForUpdate = (catalog=false) => new Promise(resolve => {
@@ -209,7 +209,7 @@
       });
       // Source inventory is in document order, regardless of selection/search order in the popup.
       const ordered = source.filter(f => keys.includes(f.key)).map(f => f.key);
-      const groupTitles=[...new Set(source.flatMap(f=>f.groups || []))];
+      const groupTitles=[...new Set([...expandedGroups,...source.flatMap(f=>f.groups || [])])];
       // A selected dependent field must not bypass an earlier differing picker.
       const lastSelected=source.reduce((last,f,i)=>keys.includes(f.key)?i:last,-1);
       const requiredPickers=source.slice(0,lastSelected+1).filter(f=>isPicker(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
