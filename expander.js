@@ -27,7 +27,7 @@
     run: async (options={}) => {
       const started=Date.now(), attempted=new WeakSet();
       const normalize=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').replace(/\s*\*\s*$/,'').trim();
-      const relevant=()=>candidates().filter(el=>!Array.isArray(options.groupTitles) || !el.matches?.('.formFieldGroupTitle') || options.groupTitles.includes(normalize(el.textContent)));
+      const relevant=()=>candidates().filter(el=>!Array.isArray(options.groupTitles) || !el.matches?.('.formFieldGroupTitle') || options.groupTitles.includes(normalize(el.querySelector('.formFieldTitle__textValue')?.textContent || el.textContent)));
       const report={eligibleBefore:relevant().length,clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
       // Several passes discover nested sections that mount after a parent opens.
       for(let pass=0;pass<8;pass++) {

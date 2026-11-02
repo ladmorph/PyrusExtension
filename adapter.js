@@ -2,13 +2,15 @@
   const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').replace(/\s*\*\s*$/, '').trim();
   const valueText = value => String(value ?? '').normalize('NFKC').replace(/\s+/g,' ').trim();
   const rowSelector = '.formFieldBaseWrapper,[data-field-id],[data-fieldid],.form-field,.field-row,.form-group';
+  const isPicker = kind => ['pyrus-choice','pyrus-catalog','pyrus-person'].includes(kind);
+  const compatible = (a,b) => a.kind===b.kind || (isPicker(a.kind)&&isPicker(b.kind)&&(a.kind==='pyrus-choice'||b.kind==='pyrus-choice')) || (['text','textarea','pyrus-text'].includes(a.kind)&&['text','textarea','pyrus-text'].includes(b.kind)&&!a.unsupported&&!b.unsupported);
   const visible = el => Boolean(el?.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden';
   function groupPath(row) {
     const labels=[];
     for(let parent=row?.parentElement;parent;parent=parent.parentElement) {
       if(!parent.matches?.('.formField'))continue;
       const title=parent.querySelector('.formFieldGroupTitle');
-      if(title && title.closest('.formField')===parent && !row.contains(title))labels.unshift(normalize(title.textContent));
+      if(title && title.closest('.formField')===parent && !row.contains(title))labels.unshift(normalize(title.querySelector('.formFieldTitle__textValue')?.textContent || title.textContent));
     }
     return labels.filter(Boolean);
   }
@@ -24,37 +26,51 @@
       const row = el.closest(rowSelector);
       const pyrus=Boolean(row?.matches?.('.formFieldBaseWrapper'));
       const labelled = (el.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ');
-      const label = normalize((pyrus ? row.querySelector('.formFieldBaseWrapper__titleWrapper')?.textContent : '') || el.getAttribute('aria-label') || labelled || [...(el.labels || [])].map(n => n.textContent).join(' ') || row?.querySelector('label,.field-name,.field-title')?.textContent);
+      const title=pyrus ? row.querySelector('.formFieldBaseWrapper__titleWrapper .formFieldTitle__textValue') || row.querySelector('.formFieldBaseWrapper__titleWrapper') : null;
+      const label = normalize(title?.textContent || el.getAttribute('aria-label') || labelled || [...(el.labels || [])].map(n => n.textContent).join(' ') || row?.querySelector('label,.field-name,.field-title')?.textContent);
       const id = row?.getAttribute('data-field-id') || row?.getAttribute('data-fieldid') || '';
       const editable=el.isContentEditable || el.getAttribute('contenteditable')==='true';
       const plainPyrusText=pyrus && editable && el.matches('.multiLineInputContent');
-      const scalarChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldRadio__content') && !el.closest('.horizontalMultiInput');
+      const singleCombo=pyrus && el.getAttribute('role')==='combobox' && !el.closest('.horizontalMultiInput');
+      const personChoice=singleCombo && row.querySelector('.personFieldAvatar,.formFieldInputCompletion__personAvatar');
+      const scalarChoice=singleCombo && !personChoice;
       const catalogChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldCatalog__content,.formFieldCatalog__mainContent') && !el.closest('.horizontalMultiInput');
-      const kind = plainPyrusText ? 'pyrus-text' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
-      const unsupported = !scalarChoice && !catalogChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
+      const kind = plainPyrusText ? 'pyrus-text' : personChoice ? 'pyrus-person' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
+      const unsupported = !scalarChoice && !catalogChoice && !personChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
       const value = ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : el.value;
       const groups=pyrus ? groupPath(row) : [];
       const path=groups.join(' / ');
       const key = id ? `field:${id}:${kind}` : label ? `label:${path ? path+' / ' : ''}${label}:${kind}` : '';
-      return { el, key, groups, label: label || (id ? `Поле ${id}` : 'Без названия'), kind, value, unsupported: Boolean(unsupported), radioValue: kind === 'radio' ? el.value : null };
+      return { el, key, groups, fieldId:id, label: label || (id ? `Поле ${id}` : 'Без названия'), kind, value, unsupported: Boolean(unsupported), radioValue: kind === 'radio' ? el.value : null };
     }).filter(f => f.key).map(f => ({...f, key: f.kind === 'radio' ? `${f.key}:${f.radioValue}` : f.key}));
   }
   const serial = f => { const {el, ...rest} = f; return rest; };
   function plan(source, overwrite) {
     const targets = inventory();
-    return source.map(s => {
-      const matches = targets.filter(t => t.key === s.key);
+    const direct=source.map(s=>targets.filter(t=>t.key===s.key));
+    const pool=(s,index)=>{
+      const byId=s.fieldId?targets.filter(t=>t.fieldId===s.fieldId&&compatible(s,t)):[];
+      const candidates=byId.length?byId:targets.filter(t=>normalize(t.label)===normalize(s.label)&&compatible(s,t)&&!(s.fieldId&&t.fieldId&&s.fieldId!==t.fieldId));
+      return candidates.filter(t=>!direct.some((matches,i)=>i!==index&&matches.length===1&&matches[0]===t));
+    };
+    return source.map((s,index) => {
+      const matches=direct[index].length?direct[index]:pool(s,index);
       const duplicates = source.filter(t => t.key === s.key).length > 1;
-      const target = matches[0];
+      const shared=matches.length===1&&!direct[index].length&&source.some((other,i)=>i!==index&&!direct[i].length&&pool(other,i).includes(matches[0]));
+      const ambiguous=duplicates || matches.length>1 || shared;
+      const rawTarget=matches.length===1&&!ambiguous?matches[0]:null;
+      // Empty and filled states of the same Pyrus picker can have different wrappers.
+      const target=rawTarget && isPicker(s.kind)&&isPicker(rawTarget.kind)&&s.kind!=='pyrus-choice'?{...rawTarget,kind:s.kind}:rawTarget;
       const filled = target && (Array.isArray(target.value) ? target.value.length > 0 : target.value !== '' && target.value !== false);
-      let reason = duplicates || matches.length > 1 ? 'Неоднозначное совпадение' : !target ? 'Поле не найдено после раскрытия — скачайте отчёт' : s.unsupported || target.unsupported ? 'Нестандартное поле: требуется адаптер' : target.kind === 'radio' ? 'Радиогруппа: требуется адаптер' : filled && !overwrite ? 'В целевой задаче уже заполнено' : '';
+      let reason = ambiguous ? 'Неоднозначное совпадение' : !target ? 'Поле не найдено после раскрытия — скачайте отчёт' : s.unsupported || target.unsupported ? 'Нестандартное поле: требуется адаптер' : target.kind === 'radio' ? 'Радиогруппа: требуется адаптер' : filled && !overwrite && JSON.stringify(target.value)!==JSON.stringify(s.value) ? 'В целевой задаче уже заполнено' : '';
       if (!reason && ['select','multi-select'].includes(target.kind)) {
         const values = Array.isArray(s.value) ? s.value : [s.value];
         if (values.some(v => ![...target.el.options].some(o => o.value === v))) reason = 'В списке нет исходного значения';
       }
-      if(!reason && ['pyrus-choice','pyrus-catalog'].includes(target.kind) && s.value==='' && target.value!=='')reason='Очистка списка Pyrus пока не поддерживается';
-      const deferred = !target && !duplicates && !s.unsupported && s.kind !== 'radio';
-      return { key:s.key, label:s.label, value:s.value, reason, deferred, target };
+      if(!reason && isPicker(target.kind) && s.value==='' && target.value!=='')reason='Очистка списка Pyrus пока не поддерживается';
+      const deferred = !target && !ambiguous && !s.unsupported && s.kind !== 'radio';
+      return { key:s.key, label:s.label, value:s.value, reason, deferred, target,
+        matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:targets.filter(t=>normalize(t.label)===normalize(s.label)).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
     });
   }
   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -128,7 +144,7 @@
   }
   async function setValue(field, value) {
     const el = field.el;
-    if(['pyrus-choice','pyrus-catalog'].includes(field.kind)){await choose(field,value);return;}
+    if(isPicker(field.kind)){await choose(field,value);return;}
     if(field.kind==='checkbox'){if(el.checked!==value)el.click();return;}
     if(field.kind==='pyrus-text'){
       el.focus();
@@ -196,10 +212,10 @@
       const groupTitles=[...new Set(source.flatMap(f=>f.groups || []))];
       // A selected dependent field must not bypass an earlier differing picker.
       const lastSelected=source.reduce((last,f,i)=>keys.includes(f.key)?i:last,-1);
-      const requiredPickers=source.slice(0,lastSelected+1).filter(f=>['pyrus-catalog','pyrus-choice'].includes(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
+      const requiredPickers=source.slice(0,lastSelected+1).filter(f=>isPicker(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
       for(const controller of requiredPickers){
         const p=plan(source,overwrite).find(p=>p.key===controller.key);
-        if(!p?.target || valueText(p.target.value)!==valueText(controller.value))return [{label:controller.label,status:'blocked',reason:'unselected-controller',message:'Сначала перенесите этот справочник/список: выберите его и при необходимости включите замену заполненных значений. Зависимые поля не изменены.'}];
+        if(!p?.target || valueText(p.target.value)!==valueText(controller.value))return [{label:controller.label,status:'blocked',reason:'unselected-controller',sourceIndex:source.indexOf(controller),matching:p?.matching||null,message:'Сначала перенесите это управляющее поле: выберите его и при необходимости включите замену заполненных значений. Зависимые поля не изменены.'}];
       }
       let blocked=false;
       for (const key of ordered) {
@@ -216,21 +232,22 @@
         if (!p || p.reason) {
           result.push({label:p?.label || 'Поле',status:'skipped',reason:p?.reason || 'missing',message:p?.deferred?'Поле не появилось после заполнения предыдущих. Проверьте условие отображения.':p?.reason || 'Не найдено'});
           const original=source.find(f=>f.key===key);
-          if(['pyrus-catalog','pyrus-choice'].includes(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;
+          if(isPicker(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;
           continue;
         }
         try {
           await setValue(p.target, p.value);
           await waitForUpdate(p.target.kind==='pyrus-catalog');
           if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles});
-          const current = inventory().filter(f => f.key === key);
-          const accepted = current.length === 1 && JSON.stringify(current[0].value) === JSON.stringify(p.value);
-          if(!accepted && ['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true;
+          const resolved=plan(source,true).find(f=>f.key===key);
+          const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && JSON.stringify(resolved.target.value)===JSON.stringify(p.value));
+          if(!accepted && isPicker(p.target.kind))blocked=true;
           result.push({label:p.label,status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
         }
-        catch (e) { if(['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
+        catch (e) { if(isPicker(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
       }
-      return result;
+      const finalPlan=plan(source,true);
+      return result.map((entry,index)=>({...entry,sourceIndex:source.findIndex(f=>f.key===ordered[index]),matching:finalPlan.find(f=>f.key===ordered[index])?.matching||null}));
     }
   };
 })();

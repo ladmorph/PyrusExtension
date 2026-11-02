@@ -140,3 +140,30 @@ test('Pyrus portal does not accept a row with extra or differing words',async()=
  const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Сервис, prod'}];
  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);assert.equal(result.reason,'choice-option-not-found');assert.equal(selected,0);w.close();
 });
+test('unique label bridges different group paths and generic draft pickers: person then catalog then text',async()=>{
+ const w=page(row('Сотрудник','<div class="formFieldInputCompletion"><input role="combobox" aria-owns="people"></div>')+'<div id="catalogField" style="display:none">'+row('Система','<div class="formFieldInputCompletion"><input role="combobox" aria-owns="catalog"></div>')+'</div><div id="dependent" style="display:none">'+row('Причина','<div contenteditable="true" class="multiLineInputContent"></div>')+'</div><div id="people" role="listbox"><div role="option" class="completionMenuItem"><span class="completionMenuItem__name">Тестовый сотрудник</span><span>добавочный статус</span></div></div><table id="catalog"><tbody><tr class="completionTableMenuItem"><td>Система А</td></tr></tbody></table>');
+ const inputs=w.document.querySelectorAll('input'),order=[];
+ w.document.querySelector('#people .completionMenuItem__name').onclick=()=>{
+   order.push('person');inputs[0].value='Тестовый сотрудник';w.document.getElementById('people').style.display='none';w.document.getElementById('catalogField').style.display='';
+   const avatar=w.document.createElement('div');avatar.className='personFieldAvatar';inputs[0].parentElement.append(avatar);
+ };
+ w.document.querySelector('#catalog td').onclick=()=>{order.push('catalog');inputs[1].value='Система А';inputs[1].parentElement.classList.add('formFieldCatalog__mainContent');w.document.getElementById('catalog').style.display='none';w.document.getElementById('dependent').style.display='';};
+ const source=[{label:'Сотрудник',kind:'pyrus-person',value:'Тестовый сотрудник'},{label:'Система',kind:'pyrus-catalog',value:'Система А'},{label:'Причина',kind:'pyrus-text',value:'Тест'}].map(f=>({...f,groups:['Секция источника'],key:'label:Секция источника / '+f.label+':'+f.kind}));
+ const first=w.pyrusTransfer.preview(source,false)[0];assert.equal(first.matching.mode,'unique-label');assert.equal(first.matching.targetKind,'pyrus-choice');
+ const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+ assert.ok(results.every(r=>r.status==='dispatched'),JSON.stringify(results));assert.deepEqual(order,['person','catalog']);
+ assert.equal(w.document.querySelector('.multiLineInputContent').textContent,'Тест');assert.equal(w.pyrusTransfer.capture()[0].kind,'pyrus-person');w.close();
+});
+test('fallback matching refuses competing source names and conflicting field IDs',()=>{
+ const w=page(row('Имя','<input>'));
+ const source=[{key:'label:A/Имя:text',label:'Имя',kind:'text',value:'a'},{key:'label:B/Имя:text',label:'Имя',kind:'text',value:'b'}];
+ const result=w.pyrusTransfer.preview(source,true);assert.ok(result.every(r=>r.matching.mode==='ambiguous'&&!r.deferred));
+ w.document.querySelector('.formFieldBaseWrapper').setAttribute('data-field-id','target-id');
+ const [conflict]=w.pyrusTransfer.preview([{key:'field:source-id:text',fieldId:'source-id',label:'Имя',kind:'text',value:'x'}],true);
+ assert.equal(conflict.matching.mode,'missing');w.close();
+});
+test('Pyrus uses only title text and leaves required markers and tooltips out of matching',()=>{
+ const html=row('ignore','<input>');const w=page(html);
+ w.document.querySelector('.formFieldBaseWrapper__titleWrapper').innerHTML='<span class="formFieldTitle__textValue">Название</span><span>*</span><span>Подсказка</span>';
+ assert.equal(w.pyrusTransfer.capture()[0].label,'Название');w.close();
+});

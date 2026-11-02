@@ -35,7 +35,7 @@ async function page(method,args=[],expectedTab){
 function reset(){$('fields').replaceChildren();$('review').hidden=true;$('apply').disabled=true;previewTab=undefined;}
 async function loadSource(){
  snapshot=(await storage.get('snapshot')).snapshot;
- if(snapshot && snapshot.adapterVersion!=='pyrus-dom-v2'){
+ if(snapshot && snapshot.adapterVersion!=='pyrus-dom-v3'){
    await storage.remove('snapshot');snapshot=null;
    status('Распознавание полей обновлено. Сохраните исходную задачу заново.');
  }
@@ -58,7 +58,7 @@ function action(id,fn){$(id).onclick=async()=>{
 action('capture',async()=>{
  reset();const result=await page('capture');
  if(!result.data.length)throw new Error('В открытых разделах поля не найдены. Включите редактирование. Скачайте отчёт — для этой разметки нужен адаптер.');
- snapshot={adapterVersion:'pyrus-dom-v2',url:result.url,time:Date.now(),fields:result.data};await storage.set({snapshot});await loadSource();
+ snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data};await storage.set({snapshot});await loadSource();
  status('Поля сохранены. Перейдите в другую задачу того же шаблона.');
 });
 action('preview',async()=>{
@@ -68,7 +68,7 @@ action('preview',async()=>{
  if(result.url===snapshot.url)throw new Error('Открыта исходная задача. Перейдите в другую задачу.');
  if(new URL(result.url).origin!==new URL(snapshot.url).origin)throw new Error('Задачи должны быть на одном сервере Pyrus.');
  previewTab={id:result.tabId,url:result.url};
- lastPlan=result.data.map((f,index)=>({index,reason:f.deferred?'conditional-pending':f.reason||'ready'}));await storage.set({lastPlan});
+ lastPlan=result.data.map((f,index)=>({index,reason:f.deferred?'conditional-pending':f.reason||'ready',matching:f.matching||null}));await storage.set({lastPlan});
  for(const f of result.data){
  const label=document.createElement('label');label.className='field'+(f.reason&&!f.deferred?' blocked':'');
  const cb=document.createElement('input');cb.type='checkbox';cb.value=f.key;cb.disabled=Boolean(f.reason)&&!f.deferred;cb.checked=!cb.disabled;cb.onchange=selection;
@@ -90,7 +90,7 @@ action('apply',async()=>{
  const current=await page('preview',[snapshot.fields,$('overwrite').checked],previewTab.id);
  if(current.url!==previewTab.url)throw new Error('Страница изменилась. Повторите сопоставление.');
  const result=await page('apply',[snapshot.fields,keys,$('overwrite').checked],previewTab.id);
- await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason}))});
+ await record('transfer',{requested:keys.length,results:result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,matching:r.matching||null}))});
  reset();status(result.data.map(r=>r.label+': '+r.message).join('\n'));
 });
 action('clear',async()=>{await storage.remove('snapshot');await loadSource();reset();status('Сохранённые поля удалены.');});
@@ -142,4 +142,3 @@ action('export',async()=>{
 });
 action('clearLogs',async()=>{diagnostics=[];lastPage=null;lastPlan=null;lastStructure=null;await storage.remove(['diagnostics','lastPage','lastPlan']);logView();status('Диагностика очищена.');});
 (async()=>{const saved=await storage.get(['diagnostics','lastPage','lastPlan']);diagnostics=saved.diagnostics||[];lastPage=saved.lastPage||null;lastPlan=saved.lastPlan||null;logView();await loadSource();reset();})().catch(e=>status(e.message,true));
-

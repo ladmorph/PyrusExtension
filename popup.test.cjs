@@ -5,7 +5,7 @@ const vm=require('node:vm');
 test('popup diagnostics survives reopen and exports a report without page data',async()=>{
   const ids=[...fs.readFileSync(__dirname+'/popup.html','utf8').matchAll(/id="([^"]+)"/g)].map(m=>m[1]);
   const elements=Object.fromEntries(ids.map(id=>[id,{id,disabled:false,children:[],classList:{toggle(){}},querySelectorAll:()=>[],replaceChildren(){},append(){},value:'',checked:false}]));
-  const saved={snapshot:{adapterVersion:'pyrus-dom-v2',time:Date.now(),url:'https://secret.example/task/123?token=SECRET',fields:[{key:'label:SECRET_NAME:text',label:'SECRET_NAME',kind:'text',value:'SECRET_VALUE'}]}};
+  const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:'https://secret.example/task/123?token=SECRET',fields:[{key:'label:SECRET_NAME:text',label:'SECRET_NAME',kind:'text',value:'SECRET_VALUE'}]}};
   const storage={async get(keys){return typeof keys==='string'?{[keys]:saved[keys]}:{...saved};},async set(obj){Object.assign(saved,obj);},async remove(keys){for(const k of Array.isArray(keys)?keys:[keys])delete saved[k];}};
   let blob,downloaded=false;
   class TestURL extends URL { static createObjectURL(b){blob=b;return 'blob:test';} static revokeObjectURL(){} }
@@ -33,4 +33,3 @@ test('popup diagnostics survives reopen and exports a report without page data',
   await elements.clearLogs.onclick();
   assert.equal(saved.diagnostics,undefined);
 });
-
