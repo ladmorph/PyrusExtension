@@ -226,6 +226,7 @@
         const sourceIndex=source.findIndex(f=>f.key===key);
         const controller=requiredPickers.find(f=>source.indexOf(f)<sourceIndex && (()=>{
           const p=plan(source,overwrite).find(p=>p.key===f.key);
+          if(p?.matching.mode==='missing')return false;
           return !p?.target || valueText(p.target.value)!==valueText(f.value);
         })());
         if(!blocked && controller){
@@ -242,6 +243,10 @@
           }
         }
         if (!p || p.reason) {
+          if(!p || p.matching.mode==='missing'){
+            result.push({label:p?.label || source[sourceIndex].label,status:'skipped',reason:'missing',message:'Поле отсутствует в целевой форме. Пропущено, перенос продолжается.'});
+            continue;
+          }
           result.push({label:p?.label || 'Поле',status:'skipped',reason:p?.reason || 'missing',message:p?.deferred?'Поле не появилось после заполнения предыдущих. Проверьте условие отображения.':p?.reason || 'Не найдено'});
           const original=source.find(f=>f.key===key);
           if(isPicker(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;

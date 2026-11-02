@@ -26,5 +26,5 @@ test('reports a conditional field that never appears',async()=>{
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(__dirname+'/adapter.js','utf8'),ctx);
  const source=[{key:'label:X:text',label:'X',kind:'text',value:'secret'}];
  const [result]=await ctx.pyrusTransfer.apply(source,['label:X:text'],false);
- assert.equal(result.status,'skipped');assert.match(result.message,/не появилось/);
+ assert.equal(result.status,'skipped');assert.equal(result.reason,'missing');
 });

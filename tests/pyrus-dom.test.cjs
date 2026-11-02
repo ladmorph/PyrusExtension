@@ -3,6 +3,22 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('missing catalog does not block information system or its dependent field',async()=>{
+ const w=page(row('Информационная система','<div class="formFieldCatalog__content"><input role="combobox" aria-owns="systems"></div>')+'<table id="systems"><tbody><tr><td>Система А</td></tr></tbody></table>');
+ const input=w.document.querySelector('input');
+ w.document.querySelector('td').onclick=()=>{input.value='Система А';w.document.getElementById('systems').style.display='none';w.document.body.insertAdjacentHTML('beforeend',row('Причина','<input>'));};
+ const source=[{key:'absent',label:'Отсутствующий справочник',kind:'pyrus-catalog',value:'Запись'},{key:'system',label:'Информационная система',kind:'pyrus-catalog',value:'Система А'},{key:'dependent',label:'Причина',kind:'text',value:'Нужен доступ'}];
+ const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
+ assert.equal(results[0].reason,'missing');assert.equal(results[0].status,'skipped');
+ assert.equal(results[1].status,'dispatched');assert.equal(results[2].status,'dispatched');
+ assert.equal(w.document.querySelectorAll('input')[1].value,'Нужен доступ');w.close();
+});
+test('unselected absent controller does not block available fields',async()=>{
+ const w=page(row('Описание','<input>'));
+ const source=[{key:'absent',label:'Нет в черновике',kind:'pyrus-catalog',value:'Запись'},{key:'text',label:'Описание',kind:'text',value:'Текст'}];
+ const [result]=await w.pyrusTransfer.apply(source,['text'],false);
+ assert.equal(result.status,'dispatched');assert.equal(w.document.querySelector('input').value,'Текст');w.close();
+});
 test('later omitted ambiguous catalog does not block an earlier employee',async()=>{
  const w=page(row('Сотрудник','<input role="combobox" aria-owns="people"><span class="personFieldAvatar"></span>')+row('Каталог','<div class="formFieldCatalog__content"><input role="combobox"></div>')+row('Каталог','<div class="formFieldCatalog__content"><input role="combobox"></div>')+row('Причина','<input>')+'<div id="people" role="listbox"><div role="option">Иван Тестовый</div></div>');
  const input=w.document.querySelector('input');w.document.querySelector('[role=option]').onclick=()=>{input.value='Иван Тестовый';w.document.getElementById('people').style.display='none';};
