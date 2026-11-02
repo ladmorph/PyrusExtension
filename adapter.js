@@ -2,8 +2,9 @@
   const normalize = value => String(value || '').normalize('NFKC').replace(/\s+/g, ' ').replace(/\s*\*\s*$/, '').trim();
   const valueText = value => String(value ?? '').normalize('NFKC').replace(/\s+/g,' ').trim();
   const rowSelector = '.formFieldBaseWrapper,[data-field-id],[data-fieldid],.form-field,.field-row,.form-group';
-  const isPicker = kind => ['pyrus-choice','pyrus-catalog','pyrus-person'].includes(kind);
-  const compatible = (a,b) => a.kind===b.kind || (isPicker(a.kind)&&isPicker(b.kind)&&(a.kind==='pyrus-choice'||b.kind==='pyrus-choice')) || (['text','textarea','pyrus-text'].includes(a.kind)&&['text','textarea','pyrus-text'].includes(b.kind)&&!a.unsupported&&!b.unsupported);
+  const isPicker = kind => ['pyrus-choice','pyrus-catalog','pyrus-person','pyrus-multi-choice'].includes(kind);
+  const tokens=container=>[...new Set([...container.querySelectorAll('.multiInputToken .token__text')].map(el=>valueText(el.textContent)).filter(Boolean))].sort();
+  const compatible = (a,b) => a.kind===b.kind || (a.kind!=='pyrus-multi-choice'&&b.kind!=='pyrus-multi-choice'&&isPicker(a.kind)&&isPicker(b.kind)&&(a.kind==='pyrus-choice'||b.kind==='pyrus-choice')) || (['text','textarea','pyrus-text'].includes(a.kind)&&['text','textarea','pyrus-text'].includes(b.kind)&&!a.unsupported&&!b.unsupported);
   const visible = el => Boolean(el?.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden';
   function groupPath(row) {
     const labels=[];
@@ -31,13 +32,14 @@
       const id = row?.getAttribute('data-field-id') || row?.getAttribute('data-fieldid') || '';
       const editable=el.isContentEditable || el.getAttribute('contenteditable')==='true';
       const plainPyrusText=pyrus && editable && el.matches('.multiLineInputContent');
+      const multiChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.horizontalMultiInput') && el.closest('.formFieldRadio__content');
       const singleCombo=pyrus && el.getAttribute('role')==='combobox' && !el.closest('.horizontalMultiInput');
       const personChoice=singleCombo && row.querySelector('.personFieldAvatar,.formFieldInputCompletion__personAvatar');
       const scalarChoice=singleCombo && !personChoice;
       const catalogChoice=pyrus && el.getAttribute('role')==='combobox' && el.closest('.formFieldCatalog__content,.formFieldCatalog__mainContent') && !el.closest('.horizontalMultiInput');
-      const kind = plainPyrusText ? 'pyrus-text' : personChoice ? 'pyrus-person' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
-      const unsupported = !scalarChoice && !catalogChoice && !personChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
-      const value = ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : el.value;
+      const kind = multiChoice ? 'pyrus-multi-choice' : plainPyrusText ? 'pyrus-text' : personChoice ? 'pyrus-person' : catalogChoice ? 'pyrus-catalog' : scalarChoice ? 'pyrus-choice' : el.tagName === 'SELECT' ? (el.multiple ? 'multi-select' : 'select') : editable ? 'richtext' : el.type || 'text';
+      const unsupported = !multiChoice && !scalarChoice && !catalogChoice && !personChoice && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete') || el.closest('[role="combobox"]')) || kind === 'richtext';
+      const value = multiChoice ? tokens(el.closest('.horizontalMultiInput')) : ['checkbox','radio'].includes(kind) ? el.checked : kind === 'multi-select' ? [...el.selectedOptions].map(o => o.value) : plainPyrusText ? (el.innerText ?? el.textContent) : editable ? '' : el.value;
       const groups=pyrus ? groupPath(row) : [];
       const path=groups.join(' / ');
       const key = id ? `field:${id}:${kind}` : label ? `label:${path ? path+' / ' : ''}${label}:${kind}` : '';
@@ -68,6 +70,7 @@
         if (values.some(v => ![...target.el.options].some(o => o.value === v))) reason = 'В списке нет исходного значения';
       }
       if(!reason && isPicker(target.kind) && s.value==='' && target.value!=='')reason='Очистка списка Pyrus пока не поддерживается';
+      if(!reason && target.kind==='pyrus-multi-choice' && (!Array.isArray(s.value) || target.value.some(v=>!s.value.includes(v))))reason='В целевом множественном поле есть лишние варианты: автоматическое удаление пока не поддерживается';
       const deferred = !target && !ambiguous && !s.unsupported && s.kind !== 'radio';
       return { key:s.key, label:s.label, value:s.value, reason, deferred, target,
         matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:targets.filter(t=>normalize(t.label)===normalize(s.label)).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
@@ -105,7 +108,7 @@
   async function choose(field,value) {
     const el=field.el,previous=el.value;
     globalThis.pyrusPickerFailureStructure=null;
-    if(valueText(previous)===valueText(value)){globalThis.pyrusPickerStatus={outcome:'already-matched',kind:field.kind};return;}
+    if(field.kind!=='pyrus-multi-choice' && valueText(previous)===valueText(value)){globalThis.pyrusPickerStatus={outcome:'already-matched',kind:field.kind};return;}
     let panelCount=0,optionCount=0;
     el.focus();
     const icon=el.closest('.formFieldInputCompletion')?.querySelector('.formFieldInputCompletion__dropdownIconWrapper');
@@ -144,6 +147,19 @@
   }
   async function setValue(field, value) {
     const el = field.el;
+    if(field.kind==='pyrus-multi-choice'){
+      const container=el.closest('.horizontalMultiInput');
+      for(const item of value){
+        if(tokens(container).includes(item))continue;
+        const current=container.querySelector('input[role="combobox"]');
+        if(!current)throw new Error('multi-input-missing');
+        await choose({...field,el:current},item);
+        let accepted=false;
+        for(let attempt=0;attempt<10;attempt++){if(tokens(container).includes(item)){accepted=true;break;}await delay(100);}
+        if(!accepted)throw new Error('multi-token-not-confirmed');
+      }
+      return;
+    }
     if(isPicker(field.kind)){await choose(field,value);return;}
     if(field.kind==='checkbox'){if(el.checked!==value)el.click();return;}
     if(field.kind==='pyrus-text'){

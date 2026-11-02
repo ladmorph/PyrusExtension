@@ -3,6 +3,24 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
+test('copies multi-choice tokens individually and continues to dependent fields',async()=>{
+ const token=v=>'<span class="multiInputToken"><span class="token__text">'+v+'</span><span class="token__cross">x</span></span>';
+ const html=selected=>row('Методы','<div class="formFieldRadio__content"><div class="horizontalMultiInput">'+selected.map(token).join('')+'<input role="combobox" aria-controls="choices"></div></div>');
+ const src=page(html(['POST','GET']));const captured=src.pyrusTransfer.capture();assert.equal(captured[0].kind,'pyrus-multi-choice');assert.deepEqual([...captured[0].value],['GET','POST']);src.close();
+ const w=page(html([])+'<div id="choices" role="listbox"><div role="option">GET</div><div role="option">POST</div></div>');
+ const container=w.document.querySelector('.horizontalMultiInput'),input=container.querySelector('input');let clicks=0;
+ w.document.querySelectorAll('[role=option]').forEach(option=>option.onclick=()=>{clicks++;container.insertAdjacentHTML('afterbegin',token(option.textContent));input.value='';if(clicks===2)w.document.body.insertAdjacentHTML('beforeend',row('Причина','<input>'));});
+ const source=[...captured,{key:'reason',label:'Причина',kind:'text',value:'Тест'}];
+ const result=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
+ assert.ok(result.every(r=>r.status==='dispatched'),JSON.stringify(result));assert.equal(clicks,2);
+ await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);assert.equal(clicks,2);w.close();
+});
+test('multi-choice does not silently delete extra selections or match a scalar picker',()=>{
+ const w=page(row('Методы','<div class="formFieldRadio__content"><div class="horizontalMultiInput"><span class="multiInputToken"><span class="token__text">DELETE</span></span><input role="combobox"></div></div>'));
+ const source=[{key:'methods',label:'Методы',kind:'pyrus-multi-choice',value:['GET']}];
+ assert.match(w.pyrusTransfer.preview(source,true)[0].reason,/лишние/);
+ source[0].kind='pyrus-choice';source[0].value='GET';assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');w.close();
+});
 test('dedicated table and multi-value structures survive general sample truncation',()=>{
  const w=page('<input>'.repeat(160)+'<div class="viewTableFieldNew"><button>PRIVATE_ADD</button><table><tbody><tr><td class="formCell"><div class="cellString__content" contenteditable="true">PRIVATE_CELL</div></td></tr></tbody></table></div><div class="horizontalMultiInput"><div class="tokens"><span class="selectedToken">PRIVATE_CHOICE</span></div><input value="PRIVATE_QUERY"></div>');
  w.eval(code('structure.js'));const report=w.pyrusStructure();
