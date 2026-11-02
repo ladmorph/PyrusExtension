@@ -115,4 +115,28 @@ test('catalog recorder ignores password values even inside a catalog wrapper',as
  const entry=report.events.flatMap(e=>e.nodes).find(n=>n.tag==='INPUT');
  assert.deepEqual(Object.keys(entry.signatures),[]);assert.deepEqual(Object.keys(entry.attributeSignatures),[]);w.close();
 });
-
+test('recorded Pyrus portal without ARIA linkage selects formatted catalog value by cell pointer events',async()=>{
+ const w=page(row('Система','<div class="formFieldCatalog__content"><div class="formFieldInputCompletion"><input role="combobox" aria-owns="missing-owned-node"><span class="formFieldInputCompletion__dropdownIconWrapper"></span></div></div>')+row('Текст','<div contenteditable="true" class="multiLineInputContent"></div>')+'<div class="inputCompletion__popup" style="display:none"><div class="inputCompletion__popupContent"><table><tbody><tr class="completionTableMenuItem"><td>Сервис [А]</td><td>prod</td></tr></tbody></table></div></div>');
+ const input=w.document.querySelector('input'),popup=w.document.querySelector('.inputCompletion__popup'),events=[];
+ w.document.querySelector('.formFieldInputCompletion__dropdownIconWrapper').onclick=()=>{popup.style.display='';input.setAttribute('aria-expanded','true');};
+ const cell=popup.querySelector('td');cell.onpointerdown=()=>events.push('pointerdown');cell.onmousedown=()=>events.push('mousedown');
+ cell.onclick=()=>{events.push('click');input.value='Сервис [А], prod';input.setAttribute('aria-expanded','false');popup.style.display='none';};
+ const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Сервис [А], prod'},{key:'label:Текст:pyrus-text',label:'Текст',kind:'pyrus-text',value:'Следующее поле'}];
+ const result=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+ assert.ok(result.every(r=>r.status==='dispatched'),JSON.stringify(result));assert.deepEqual(events,['pointerdown','mousedown','click']);w.close();
+});
+test('Pyrus catalog fallback query keeps exact matching against original full value',async()=>{
+ const w=page(row('Система','<div class="formFieldCatalog__content"><input role="combobox" aria-owns="missing"></div>')+'<div class="inputCompletion__popup"><table><tbody></tbody></table></div>');
+ const input=w.document.querySelector('input'),body=w.document.querySelector('tbody');
+ input.addEventListener('input',()=>{
+   if(input.value==='Сервис'){body.innerHTML='<tr class="completionTableMenuItem"><td>Сервис</td><td>prod</td></tr>';body.querySelector('td').onclick=()=>{input.value='Сервис, prod';w.document.querySelector('.inputCompletion__popup').style.display='none';};}
+ });
+ const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Сервис, prod'}];
+ const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);assert.equal(result.status,'dispatched');w.close();
+});
+test('Pyrus portal does not accept a row with extra or differing words',async()=>{
+ const w=page(row('Система','<div class="formFieldCatalog__content"><input role="combobox"></div>')+'<div class="inputCompletion__popup"><table><tbody><tr class="completionTableMenuItem"><td>Сервис</td><td>prod EXTRA</td></tr></tbody></table></div>');
+ let selected=0;w.document.querySelector('td').onclick=()=>selected++;
+ const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Сервис, prod'}];
+ const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);assert.equal(result.reason,'choice-option-not-found');assert.equal(selected,0);w.close();
+});

@@ -19,10 +19,10 @@
         childCount:el.children.length};
     }
     function samples(doc) {
-      const all=[...doc.querySelectorAll('input,textarea,select,[contenteditable="true"],[aria-expanded],details>summary,.formFieldGroupTitle,.formFieldBaseWrapper__titleWrapper,[role="listbox"],[role="option"],[role="row"]')];
+      const all=[...doc.querySelectorAll('input,textarea,select,[contenteditable="true"],[aria-expanded],details>summary,.formFieldGroupTitle,.formFieldBaseWrapper__titleWrapper,[role="listbox"],[role="option"],[role="row"],.inputCompletion__popup,.completionTableMenuItem,.completionMenuItem')];
       const linked=[...new Set(all.flatMap(el=>['aria-owns','aria-controls'].flatMap(name=>(el.getAttribute(name)||'').split(/\s+/).filter(Boolean).map(id=>doc.getElementById(id)).filter(Boolean))))];
       const panelNodes=linked.flatMap(panel=>[panel,...panel.querySelectorAll('*')].slice(0,100));
-      const popup=all.filter(el=>['listbox','option','row'].includes(el.getAttribute('role')));
+      const popup=all.filter(el=>['listbox','option','row'].includes(el.getAttribute('role')) || el.matches?.('.inputCompletion__popup,.completionTableMenuItem,.completionMenuItem'));
       const seeds=[...new Set([...popup,...panelNodes,...all])];
       return {total:seeds.length,truncated:seeds.length>140,samples:seeds.slice(0,140).map((el,index)=>{
         const ancestors=[];let parent=el.parentElement;

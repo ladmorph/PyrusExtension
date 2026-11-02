@@ -63,6 +63,29 @@
     Object.getOwnPropertyDescriptor(proto,'value').set.call(el,value);
     el.dispatchEvent(new Event('input',{bubbles:true}));
   }
+  function matchOption(option,value,catalog){
+    const wanted=valueText(value);
+    if(!wanted)return false;
+    const cells=catalog?[...option.querySelectorAll('td,[role="cell"],[role="gridcell"]')].filter(visible):[];
+    const named=option.querySelector('.completionMenuItem__name');
+    if(valueText(option.textContent)===wanted || (named && valueText(named.textContent)===wanted) || cells.some(cell=>valueText(cell.textContent)===wanted))return true;
+    // Pyrus can render the selected value as several column texts separated by punctuation.
+    // Require all nonempty visible cells, in order, with no extra words or digits.
+    const texts=cells.map(cell=>valueText(cell.textContent)).filter(Boolean);
+    if(texts.length<2)return false;
+    const escape=text=>text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    const separator='[\\s,;:|/()\\[\\]—–-]*';
+    return new RegExp('^'+separator+texts.map(escape).join(separator)+separator+'$','u').test(wanted);
+  }
+  function activateOption(option,value,catalog){
+    const cells=catalog?[...option.querySelectorAll('td,[role="cell"],[role="gridcell"]')].filter(visible):[];
+    const target=cells.find(cell=>valueText(cell.textContent)===valueText(value)) || cells[0] || option.querySelector('.completionMenuItem__name') || option;
+    target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'mouse',button:0}));
+    target.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,button:0}));
+    target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'mouse',button:0}));
+    target.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,button:0}));
+    target.click();
+  }
   async function choose(field,value) {
     const el=field.el,previous=el.value;
     globalThis.pyrusPickerFailureStructure=null;
@@ -73,24 +96,31 @@
     if(icon)icon.click();else el.click();
     writeNative(el,value);
     try {
+      const searchQueries=[...new Set([String(value),String(value).split(/[,;:|/(\[]/)[0].trim(),String(value).trim().split(/\s+/).slice(0,2).join(' '),String(value).trim().split(/\s+/)[0]].filter(Boolean))];
       for(let attempt=0;attempt<(field.kind==='pyrus-catalog'?40:20);attempt++) {
+        if(field.kind==='pyrus-catalog' && attempt>0 && attempt%10===0 && searchQueries[attempt/10])writeNative(el,searchQueries[attempt/10]);
         await delay(150);
         const ids=[...(el.getAttribute('aria-owns')||'').split(/\s+/),...(el.getAttribute('aria-controls')||'').split(/\s+/)].filter(Boolean);
-        let panels=ids.map(id=>document.getElementById(id)).filter(Boolean);
-        if(!panels.length){const lists=[...document.querySelectorAll('[role="listbox"]')].filter(visible);if(lists.length===1)panels=lists;}
+        let panels=ids.map(id=>document.getElementById(id)).filter(p=>p&&visible(p));
+        if(!panels.length){
+          const popups=[...document.querySelectorAll('.inputCompletion__popup')].filter(visible);
+          if(popups.length>1)throw new Error('choice-popup-ambiguous');
+          if(popups.length===1 && (document.activeElement===el || el.getAttribute('aria-expanded')==='true'))panels=popups;
+          else if(!popups.length){const lists=[...document.querySelectorAll('[role="listbox"]')].filter(visible);if(lists.length===1)panels=lists;}
+        }
         panelCount=panels.length;
-        const optionSelector=field.kind==='pyrus-catalog'?'[role="option"],[role="row"],tbody tr':'[role="option"]';
+        const optionSelector=field.kind==='pyrus-catalog'?'.completionTableMenuItem,[role="option"],[role="row"],tbody tr':'.completionMenuItem,[role="option"]';
         let candidates=[...new Set(panels.flatMap(p=>[...p.querySelectorAll(optionSelector)]))].filter(o=>visible(o)&&o.getAttribute('aria-disabled')!=='true');
         // A row can contain a role=option; count its clickable item only once.
         candidates=candidates.filter(o=>!candidates.some(other=>other!==o && o.contains(other)));
         optionCount=candidates.length;
-        const options=candidates.filter(o=>valueText(o.textContent)===valueText(value) || (field.kind==='pyrus-catalog' && [...o.querySelectorAll('td,[role="cell"],[role="gridcell"]')].some(cell=>valueText(cell.textContent)===valueText(value))));
+        const options=candidates.filter(o=>matchOption(o,value,field.kind==='pyrus-catalog'));
         if(options.length>1)throw new Error('choice-ambiguous');
-        if(options.length===1){options[0].click();el.blur();globalThis.pyrusPickerStatus={outcome:'selected',kind:field.kind,panelCount,optionCount};return;}
+        if(options.length===1){activateOption(options[0],value,field.kind==='pyrus-catalog');await delay(200);el.blur();globalThis.pyrusPickerStatus={outcome:'selected',kind:field.kind,panelCount,optionCount};return;}
       }
       throw new Error('choice-option-not-found');
     }catch(e){
-      const reason=['choice-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'picker-error';
+      const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'picker-error';
       globalThis.pyrusPickerStatus={outcome:reason,kind:field.kind,panelCount,optionCount};
       if(globalThis.pyrusStructure)try{globalThis.pyrusPickerFailureStructure=globalThis.pyrusStructure();}catch{}
       writeNative(el,previous);el.blur();throw e;
@@ -198,7 +228,7 @@
           if(!accepted && ['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true;
           result.push({label:p.label,status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
         }
-        catch (e) { if(['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
+        catch (e) { if(['pyrus-catalog','pyrus-choice'].includes(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
       }
       return result;
     }
