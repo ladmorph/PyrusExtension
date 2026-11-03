@@ -66,6 +66,7 @@
         current=rows(root);localSnapshot();if(current.length<=r)throw Error('table-row-not-added');
       }
       for(let c=0;c<map.length;c++){
+        globalThis.pyrusProgress?.update({detail:'Таблица · строка '+(r+1)+' из '+value.rows.length+' · столбец '+(c+1)+' из '+map.length});
         globalThis.pyrusTableStatus.phase='write-cell';
         globalThis.pyrusTableStatus.rowIndex=r;globalThis.pyrusTableStatus.columnIndex=c;
         localSnapshot();
@@ -98,16 +99,16 @@
     return captured;
   }
   // Replacement addresses individual rendered cells; it never rewrites a whole table.
-  function replacementCells(){
+  function replacementCells(readback=false){
     return roots().flatMap(root=>rows(root).flatMap((row,r)=>cells(row).map((cell,c)=>({root,cell,r,c}))))
       .map(({root,cell,r,c})=>{
         const el=cell.querySelector('.cellString__content,input:not(.cellField__focusTarget):not([type="hidden"]),textarea,select');
-        if(!el || !visible(el) || el.disabled || el.readOnly || el.closest('.horizontalMultiInput,[contenteditable="false"]'))return null;
-        const kind=el.matches('.cellString__content[contenteditable="true"]')?'pyrus-text':el.matches('.cellRadioButton__input')?'pyrus-choice':el.tagName==='SELECT'&&!el.multiple?'select':el.tagName==='TEXTAREA'?'textarea':el.closest('.cellString__main')&&el.matches('input[type="text"],input:not([type])')&&!el.hasAttribute('aria-autocomplete')?'text':null;
+        if(!el || !visible(el) || (!readback&&(el.disabled || el.readOnly || el.closest('[contenteditable="false"]'))) || el.closest('.horizontalMultiInput'))return null;
+        const kind=el.matches(readback?'.cellString__content':'.cellString__content[contenteditable="true"]')?'pyrus-text':el.matches('.cellRadioButton__input')?'pyrus-choice':el.tagName==='SELECT'&&!el.multiple?'select':el.tagName==='TEXTAREA'?'textarea':el.closest('.cellString__main')&&el.matches('input[type="text"],input:not([type])')&&!el.hasAttribute('aria-autocomplete')?'text':null;
         if(!kind)return null;
         const title=norm(root.querySelector('.viewTableFieldNew__title .formFieldTitle__textValue,.viewTableFieldNew__title')?.textContent)||'Таблица';
         const value=kind==='pyrus-text'?(el.innerText??el.textContent):el.value;
-        return {el,cell,root,r,c,kind,value,label:title+' · строка '+(r+1)+' · '+(columns(root)[c]||'столбец '+(c+1)),resolve:()=>cells(rows(root)[r]||{children:[]})[c]?.querySelector('.cellRadioButton__input')};
+        return {el,cell,root,r,c,rowCount:rows(root).length,columnNames:columns(root),kind,value,label:title+' · строка '+(r+1)+' · '+(columns(root)[c]||'столбец '+(c+1)),resolve:()=>cells(rows(root)[r]||{children:[]})[c]?.querySelector('.cellRadioButton__input')};
       }).filter(Boolean);
   }
   globalThis.pyrusTables={roots,data,verify,apply,prepareCapture,replacementCells};

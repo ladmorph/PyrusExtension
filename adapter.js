@@ -247,7 +247,8 @@
     el.blur?.();
   }
   globalThis.pyrusTransfer = {
-    replacementFields: () => inventory().filter(f=>f.kind!=='pyrus-table' && !f.el.closest('.viewTableFieldNew,.horizontalMultiInput') && !f.unsupported && ['text','textarea','pyrus-text','select','pyrus-choice','pyrus-catalog','pyrus-person'].includes(f.kind)),
+    replacementFields: (readback=false) => inventory(readback).filter(f=>f.kind!=='pyrus-table' && !f.el.closest('.viewTableFieldNew,.horizontalMultiInput') && !f.unsupported && ['text','textarea','pyrus-text','select','pyrus-choice','pyrus-catalog','pyrus-person'].includes(f.kind)),
+    replacementTables: () => inventory().filter(f=>f.kind==='pyrus-table'),
     setReplacementValue: setValue,
     openTableChoice,
     diagnose: (source=[]) => {
@@ -312,6 +313,7 @@
       const requiredPickers=source.slice(0,lastSelected+1).filter(f=>isPicker(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
       let blocked=false;
       for (const key of ordered) {
+        globalThis.pyrusProgress?.update({completed:result.length,total:ordered.length,stage:'Заполнение полей',label:source.find(f=>f.key===key)?.label||'Поле',detail:''});
         // Check only preceding controllers, after earlier selected fields have been filled.
         const sourceIndex=source.findIndex(f=>f.key===key);
         const controller=requiredPickers.find(f=>source.indexOf(f)<sourceIndex && (()=>{
@@ -357,6 +359,7 @@
         catch (e) { if(p.target.kind==='pyrus-table'){const choiceError=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message);if(globalThis.pyrusTableStatus){globalThis.pyrusTableStatus.picker=globalThis.pyrusPickerStatus||null;globalThis.pyrusTableStatus.errorType=['TypeError','ReferenceError','RangeError'].includes(e.name)?e.name:'Error';}const reason=choiceError?e.message:/^table-(columns-ambiguous|columns-missing|source-empty|source-incomplete|extra-target-rows|add-row-ambiguous|row-not-added|cell-missing|editor-unsupported|cell-not-confirmed|not-confirmed)$/.test(e.message)?e.message:'table-write-failed';result.push({label:p.label,status:'error',reason,table:globalThis.pyrusTableStatus||null,message:'Таблица заполнена не полностью: '+reason+'. Остальные поля продолжают заполняться.'});continue;} if(isPicker(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
       }
       const finalPlan=plan(source,true);
+      globalThis.pyrusProgress?.update({completed:ordered.length,total:ordered.length,stage:'Проверка результата',label:'',detail:''});
       return result.map((entry,index)=>({...entry,sourceIndex:source.findIndex(f=>f.key===ordered[index]),matching:finalPlan.find(f=>f.key===ordered[index])?.matching||null}));
     }
   };

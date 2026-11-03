@@ -90,3 +90,32 @@ test('background persists diagnostics after popup closure and ignores external s
  assert.equal(saved.lastPage.recognized,2);
  assert.deepEqual(saved.diagnostics.map(e=>e.action),['transfer-start','apply','transfer']);
 });
+test('progress shows measured fields, table detail, warnings and cleans up its reporter',async()=>{
+ const {JSDOM}=require('jsdom');const dom=new JSDOM('<body></body>',{runScripts:'outside-only'}),w=dom.window;
+ w.document.hasFocus=()=>true;const messages=[];w.chrome={runtime:{sendMessage:async m=>{messages.push(m);return {ok:true};}}};
+ w.eval(fs.readFileSync(__dirname+'/transfer-runner.js','utf8'));
+ let finish;const pending=new Promise(resolve=>{finish=resolve;});
+ w.pyrusTransferRunner.start(async()=>{
+  w.pyrusProgress.update({total:4,completed:1,stage:'Заполнение полей',label:'Поле примера'});
+  w.pyrusProgress.update({detail:'Таблица · строка 2 из 5'});
+  await pending;
+  return {data:[{status:'dispatched'},{status:'error'},{status:'dispatched'},{status:'dispatched'}],diagnostic:{recognized:4}};
+ });
+ assert.equal(w.document.querySelector('[role=progressbar]').hasAttribute('aria-valuenow'),false);
+ await new Promise(r=>setTimeout(r,150));
+ assert.equal(w.document.querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'25');
+ assert.match(w.document.body.textContent,/1 из 4 · 25%/);assert.match(w.document.body.textContent,/строка 2 из 5/);
+ finish();await new Promise(r=>setTimeout(r,25));
+ assert.equal(w.document.querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'100');
+ assert.match(w.document.body.textContent,/Завершено с замечаниями/);assert.equal(w.pyrusProgress,undefined);
+ assert.equal(messages[0].mode,'transfer');w.document.querySelector('button').click();assert.equal(w.document.querySelector('.pyrus-operation-progress'),null);w.close();
+});
+test('background separates replacement results from earlier transfer attempts',async()=>{
+ let listener;const saved={diagnostics:[{action:'transfer-start'},{action:'transfer',details:{results:[{status:'dispatched'}]}},{action:'replacement-start'}]};
+ const context={chrome:{runtime:{id:'test',onMessage:{addListener(fn){listener=fn;}}},storage:{session:{get:async()=>saved,set:async data=>Object.assign(saved,data)}}}};
+ vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),context);
+ const message={type:'pyrus-transfer-finished',mode:'replacement',diagnostic:{recognized:2},results:[{status:'error',reason:'replacement-not-confirmed',replacement:{kind:'text',verification:{targetFound:true}}}]};
+ await new Promise(resolve=>listener(message,{id:'test',tab:{id:1}},resolve));
+ assert.deepEqual(saved.diagnostics.slice(-2).map(e=>e.action),['replaceApply','replacement']);
+ assert.equal(saved.diagnostics.at(-1).details.results[0].replacement.verification.targetFound,true);
+});

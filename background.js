@@ -4,13 +4,14 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
  (async()=>{
   const saved=await chrome.storage.session.get('diagnostics');
   const diagnostics=(saved.diagnostics||[]).slice(-28),time=new Date().toISOString();
+  const replacement=message.mode==='replacement';
   if(message.type==='pyrus-transfer-finished'){
-   diagnostics.push({time,action:'apply',details:{page:message.diagnostic}});
-   diagnostics.push({time,action:'transfer',details:{requested:message.results.length,results:message.results}});
+   diagnostics.push({time,action:replacement?'replaceApply':'apply',details:{page:message.diagnostic}});
+   diagnostics.push({time,action:replacement?'replacement':'transfer',details:{requested:message.results.length,results:message.results}});
    while(diagnostics.length>2 && JSON.stringify(diagnostics).length>150000)diagnostics.shift();
    await chrome.storage.session.set({diagnostics,lastPage:message.diagnostic});
   }else{
-   diagnostics.push({time,action:'error',details:{operation:'apply',category:message.category}});
+   diagnostics.push({time,action:'error',details:{operation:replacement?'replaceApply':'apply',category:message.category}});
    while(diagnostics.length>1 && JSON.stringify(diagnostics).length>150000)diagnostics.shift();
    await chrome.storage.session.set({diagnostics});
   }

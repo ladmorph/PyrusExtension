@@ -1,6 +1,7 @@
 const $ = id => document.getElementById(id);
 let snapshot, previewTab, busy=false, diagnostics=[], lastPage=null, lastPlan=null, lastStructure=null;
 let replacementPreview=null;
+let replacementTabActive=false,draftEdited=false;
 const storage=chrome.storage.session;
 function status(message,error=false){$('status').textContent=message;$('status').classList.toggle('error',error);}
 function logView(){
@@ -29,7 +30,7 @@ async function page(method,args=[],expectedTab){
    if(prepare.sourceUrl && ['preview','apply','expand','cellProbeStart','replacePreview','replaceApply'].includes(m) && location.href===prepare.sourceUrl)throw new Error('Открыт источник. Раскрытие отменено.');
    if(m==='replaceApply' && location.href!==a[1])throw new Error('Страница изменилась. Повторите поиск.');
    if(m==='apply' && prepare.targetUrl && location.href!==prepare.targetUrl)throw new Error('Страница изменилась. Повторите заполнение черновика.');
-   if(m==='apply')globalThis.pyrusCellProbe.discard();
+   if(['apply','replaceApply'].includes(m)){globalThis.pyrusCellProbe.discard();globalThis.pyrusPickerStatus=null;globalThis.pyrusTableStatus=null;}
    const before=m==='apply'?globalThis.pyrusTransfer.diagnose(prepare.sourceFields):null;
    const expansion=['preview','apply','expand'].includes(m) ? await globalThis.pyrusExpand.run({groupTitles:prepare.groupTitles,fields:prepare.fields}) : null;
    const data=m==='replacePreview'?globalThis.pyrusReplacement.preview(a[0]):m==='replaceApply'?await globalThis.pyrusReplacement.apply(a[0]):m==='cellProbeStart'?globalThis.pyrusCellProbe.start():m==='cellProbeStop'?globalThis.pyrusCellProbe.stop():m==='cellProbeCancel'?globalThis.pyrusCellProbe.discard():m==='capture'?await globalThis.pyrusTransfer.captureTables():m==='expand'?expansion:m==='structure'?globalThis.pyrusStructure():m==='pickerStructure'?globalThis.pyrusPickerFailureStructure || null:m==='recorderStart'?await globalThis.pyrusCatalogRecorder.start(a[0]):m==='recorderStop'?await globalThis.pyrusCatalogRecorder.stop():m==='recorderDiscard'?await globalThis.pyrusCatalogRecorder.discard():await globalThis.pyrusTransfer[m](...a);
@@ -174,33 +175,44 @@ action('recorderStop',async()=>{
 });
 action('recorderDiscard',async()=>{await page('recorderDiscard');status('Запись справочника остановлена и удалена из памяти страницы.');});
 action('export',async()=>{
- const start=diagnostics.map(e=>e.action).lastIndexOf('transfer-start');
+ const start=diagnostics.map(e=>['transfer-start','replacement-start'].includes(e.action)).lastIndexOf(true);
  const attempt=start<0?diagnostics.slice(-10):diagnostics.slice(start);
- const transfer=[...attempt].reverse().find(e=>e.action==='transfer');
- const pageState=[...attempt].reverse().find(e=>e.action==='apply')?.details?.page || lastPage;
+ const operation=attempt[0]?.action==='replacement-start'||(start<0&&[...attempt].reverse().find(e=>['replacement','transfer'].includes(e.action))?.action==='replacement')?'replacement':'transfer';
+ const transfer=[...attempt].reverse().find(e=>e.action===operation);
+ const pageState=[...attempt].reverse().find(e=>e.action===(operation==='replacement'?'replaceApply':'apply'))?.details?.page || lastPage;
  const results=transfer?.details?.results || [];
  const failures=results.filter(r=>r.status!=='dispatched');
  const indices=new Set(failures.map(r=>r.sourceIndex));
- const report={format:'pyrus-transfer-debug',schemaVersion:2,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,
-  source:snapshot?{count:snapshot.fields.length}:null,
-  attempt:{started:attempt.find(e=>e.action==='transfer-start')?.time||null,completed:Boolean(transfer),selected:attempt.find(e=>e.action==='transfer-start')?.details||null,successCount:results.filter(r=>r.status==='dispatched').length,failures},
-  lastPage:pageState?{recognized:pageState.recognized,table:transfer?null:pageState.table||null,picker:pageState.picker||null,expansion:pageState.expansion||null,comparison:(pageState.comparison||[]).filter(f=>indices.has(f.sourceIndex))}:null,
-  sourceTables:(snapshot?.fields||[]).flatMap((f,index)=>f.kind==='pyrus-table'&&indices.has(index)?[{sourceIndex:index,rows:f.value.rows.length,columns:f.value.columns.length,rowWidths:f.value.rows.map(row=>row.length)}]:[]),
+ const report={format:operation==='replacement'?'pyrus-replacement-debug':'pyrus-transfer-debug',schemaVersion:2,operation,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,
+  source:operation==='transfer'&&snapshot?{count:snapshot.fields.length}:null,
+  attempt:{started:attempt.find(e=>e.action===operation+'-start')?.time||null,completed:Boolean(transfer),selected:attempt.find(e=>e.action===operation+'-start')?.details||null,successCount:results.filter(r=>r.status==='dispatched').length,failures},
+  lastPage:pageState?{recognized:pageState.recognized,table:transfer?null:pageState.table||null,picker:pageState.picker||null,expansion:pageState.expansion||null,comparison:operation==='replacement'?[]:(pageState.comparison||[]).filter(f=>indices.has(f.sourceIndex))}:null,
+  sourceTables:operation==='replacement'?[]:(snapshot?.fields||[]).flatMap((f,index)=>f.kind==='pyrus-table'&&indices.has(index)?[{sourceIndex:index,rows:f.value.rows.length,columns:f.value.columns.length,rowWidths:f.value.rows.map(row=>row.length)}]:[]),
   errors:attempt.filter(e=>e.action==='error').map(e=>({time:e.time,details:e.details}))};
  download(report,'pyrus-debug');
  status('Компактный отчёт скачан: последняя попытка, ошибки и локальный контекст. Полная структура доступна отдельной кнопкой.');
 });
 action('clearLogs',async()=>{diagnostics=[];lastPage=null;lastPlan=null;lastStructure=null;await storage.remove(['diagnostics','lastPage','lastPlan']);logView();status('Диагностика очищена.');});
 function invalidateReplacement(){replacementPreview=null;$('replaceApply').disabled=true;$('replaceResults').replaceChildren();$('replaceSummary').textContent='';}
-for(const id of ['replaceFind','replaceWith','replaceMode']){$(id).oninput=invalidateReplacement;$(id).onchange=invalidateReplacement;}
+function saveReplacementDraft(){
+ draftEdited=true;
+ return storage.set({replacementDraft:{find:$('replaceFind').value,replace:$('replaceWith').value,mode:$('replaceMode').value,tab:replacementTabActive?'replacement':'transfer'}}).catch(()=>status('Не удалось сохранить настройки замены.',true));
+}
+for(const id of ['replaceFind','replaceWith','replaceMode']){$(id).oninput=()=>{invalidateReplacement();return saveReplacementDraft();};$(id).onchange=$(id).oninput;}
 function showTab(replacement){
+ replacementTabActive=replacement;
  $('transferPanel').hidden=replacement;$('replacementPanel').hidden=!replacement;
  $('transferTab').setAttribute('aria-selected',String(!replacement));$('replacementTab').setAttribute('aria-selected',String(replacement));
  $('status').textContent=replacement?'Найдите совпадения в текущем черновике.':'Выберите действие переноса.';
 }
-$('transferTab').onclick=()=>{if(!busy)showTab(false);};$('replacementTab').onclick=()=>{if(!busy)showTab(true);};
+$('transferTab').onclick=()=>{if(!busy){showTab(false);return saveReplacementDraft();}};$('replacementTab').onclick=()=>{if(!busy){showTab(true);return saveReplacementDraft();}};
+action('replaceClear',async()=>{
+ draftEdited=true;$('replaceFind').value='';$('replaceWith').value='';$('replaceMode').value='exact';invalidateReplacement();
+ await storage.remove('replacementDraft');status('Настройки замены очищены.');
+});
 action('replacePreview',async()=>{
  invalidateReplacement();
+ await saveReplacementDraft();
  const options={find:$('replaceFind').value,replace:$('replaceWith').value,mode:$('replaceMode').value};
  if(!options.find)throw Error('Введите текст поиска.');
  const result=await page('replacePreview',[options]);
@@ -218,6 +230,7 @@ action('replaceApply',async()=>{
  if(!replacementPreview?.ready)throw Error('Сначала найдите совпадения.');
  const preview=replacementPreview;
  invalidateReplacement();
+ await record('replacement-start',{requested:preview.items.length});
  const result=await page('replaceApply',[preview.token,preview.url],preview.tabId);
  if(result.queued)return;
  const ok=result.data.filter(r=>r.status==='dispatched').length;
@@ -234,4 +247,9 @@ action('replaceApply',async()=>{
  }
  const old=(await storage.get('diagnostics')).diagnostics||[];
  if(JSON.stringify(old).length>150000)await storage.remove(['diagnostics','lastPage','lastPlan']);
- const saved=await storage.get(['diagnostics','lastPage','lastPlan']);diagnostics=saved.diagnostics||[];lastPage=saved.lastPage||null;lastPlan=saved.lastPlan||null;logView();await loadSource();reset();})().catch(e=>status(e.message,true));
+ const saved=await storage.get(['diagnostics','lastPage','lastPlan','replacementDraft']);diagnostics=saved.diagnostics||[];lastPage=saved.lastPage||null;lastPlan=saved.lastPlan||null;logView();await loadSource();reset();
+ if(!draftEdited&&saved.replacementDraft){
+  const draft=saved.replacementDraft;
+  $('replaceFind').value=typeof draft.find==='string'?draft.find:'';$('replaceWith').value=typeof draft.replace==='string'?draft.replace:'';$('replaceMode').value=draft.mode==='contains'?'contains':'exact';showTab(draft.tab==='replacement');
+ }
+})().catch(e=>status(e.message,true));
