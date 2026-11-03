@@ -1,7 +1,7 @@
 (() => {
  if(globalThis.pyrusTransferRunner)return;
  let running=false;
- globalThis.pyrusTransferRunner={start(execute){
+ globalThis.pyrusTransferRunner={start(execute,mode='transfer'){
   if(running)throw new Error('Заполнение уже выполняется на этой странице.');
   running=true;
   const banner=document.createElement('div');
@@ -15,14 +15,14 @@
      if(Date.now()>deadline)throw new Error('page-focus-timeout');
      await new Promise(resolve=>setTimeout(resolve,100));
     }
-    banner.textContent='Заполняю черновик. Оставьте эту вкладку активной…';
+    banner.textContent=mode==='replacement'?'Заменяю значения. Оставьте эту вкладку активной…':'Заполняю черновик. Оставьте эту вкладку активной…';
     const result=await execute();
     const results=result.data.map(r=>({status:r.status,reason:r.reason,sourceIndex:r.sourceIndex,controllerIndex:r.controllerIndex,table:r.table,matching:r.matching||null}));
     await chrome.runtime.sendMessage({type:'pyrus-transfer-finished',diagnostic:result.diagnostic,results});
     const ok=results.filter(r=>r.status==='dispatched').length;
-    banner.textContent='Готово: '+ok+'. Пропущено или требует проверки: '+(results.length-ok)+'. Проверьте результат и сохраните задачу в Pyrus. Отчёт доступен в расширении.';
+    banner.textContent=(mode==='replacement'?'Заменено: ':'Готово: ')+ok+'. Пропущено или требует проверки: '+(results.length-ok)+'. Проверьте результат и сохраните задачу в Pyrus. Отчёт доступен в расширении.';
    }catch(error){
-    banner.textContent='Заполнение прервано. Откройте расширение и скачайте отчёт. Если вкладка была неактивна — повторите запуск.';
+    banner.textContent='Операция прервана. Откройте расширение и скачайте отчёт. Если вкладка была неактивна — повторите запуск.';
     await chrome.runtime.sendMessage({type:'pyrus-transfer-failed',category:error.message==='page-focus-timeout'?'page-focus-timeout':'OperationError'}).catch(()=>{});
    }finally{
     running=false;

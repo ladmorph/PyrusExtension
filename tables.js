@@ -97,5 +97,18 @@
     }}finally{for(const [el,top,left] of positions){el.scrollTop=top;el.scrollLeft=left;}}
     return captured;
   }
-  globalThis.pyrusTables={roots,data,verify,apply,prepareCapture};
+  // Replacement addresses individual rendered cells; it never rewrites a whole table.
+  function replacementCells(){
+    return roots().flatMap(root=>rows(root).flatMap((row,r)=>cells(row).map((cell,c)=>({root,cell,r,c}))))
+      .map(({root,cell,r,c})=>{
+        const el=cell.querySelector('.cellString__content,input:not(.cellField__focusTarget):not([type="hidden"]),textarea,select');
+        if(!el || !visible(el) || el.disabled || el.readOnly || el.closest('.horizontalMultiInput,[contenteditable="false"]'))return null;
+        const kind=el.matches('.cellString__content[contenteditable="true"]')?'pyrus-text':el.matches('.cellRadioButton__input')?'pyrus-choice':el.tagName==='SELECT'&&!el.multiple?'select':el.tagName==='TEXTAREA'?'textarea':el.closest('.cellString__main')&&el.matches('input[type="text"],input:not([type])')&&!el.hasAttribute('aria-autocomplete')?'text':null;
+        if(!kind)return null;
+        const title=norm(root.querySelector('.viewTableFieldNew__title .formFieldTitle__textValue,.viewTableFieldNew__title')?.textContent)||'Таблица';
+        const value=kind==='pyrus-text'?(el.innerText??el.textContent):el.value;
+        return {el,cell,root,r,c,kind,value,label:title+' · строка '+(r+1)+' · '+(columns(root)[c]||'столбец '+(c+1)),resolve:()=>cells(rows(root)[r]||{children:[]})[c]?.querySelector('.cellRadioButton__input')};
+      }).filter(Boolean);
+  }
+  globalThis.pyrusTables={roots,data,verify,apply,prepareCapture,replacementCells};
 })();

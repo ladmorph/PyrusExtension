@@ -247,6 +247,8 @@
     el.blur?.();
   }
   globalThis.pyrusTransfer = {
+    replacementFields: () => inventory().filter(f=>f.kind!=='pyrus-table' && !f.el.closest('.viewTableFieldNew,.horizontalMultiInput') && !f.unsupported && ['text','textarea','pyrus-text','select','pyrus-choice','pyrus-catalog','pyrus-person'].includes(f.kind)),
+    setReplacementValue: setValue,
     openTableChoice,
     diagnose: (source=[]) => {
       const nodes = [...document.querySelectorAll('input,textarea,select,[contenteditable="true"]')];
