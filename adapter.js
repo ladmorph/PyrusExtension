@@ -308,28 +308,11 @@
       // Source inventory is in document order, regardless of selection/search order in the popup.
       const ordered = source.filter(f => keys.includes(f.key)).map(f => f.key);
       const groupTitles=[...new Set([...expandedGroups,...source.flatMap(f=>f.groups || [])])];
-      // Only scalar editors may share a wait. Choices, checkboxes and tables can
-      // rebuild dependent controls and must finish before the next field.
-      const batchable=kind=>['text','textarea','pyrus-text','number','date','datetime-local','email','tel','url','time','month','week'].includes(kind);
-      let pending=[],blocked=false;
-      const flush=async(catalog=false)=>{
-        if(!pending.length)return;
-        await waitForUpdate(catalog);
-        if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
-        const current=plan(source,true);
-        for(const {index,key,kind,value} of pending){
-          const resolved=current.find(f=>f.key===key);
-          const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && (kind==='pyrus-table'?globalThis.pyrusTables.verify(resolved.target.el,value):JSON.stringify(resolved.target.value)===JSON.stringify(value)));
-          if(!accepted && isPicker(kind))blocked=true;
-          Object.assign(result[index],{status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
-        }
-        pending=[];
-      };
       // A selected dependent field must not bypass an earlier differing picker.
       const lastSelected=source.reduce((last,f,i)=>keys.includes(f.key)?i:last,-1);
       const requiredPickers=source.slice(0,lastSelected+1).filter(f=>isPicker(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
+      let blocked=false;
       for (const key of ordered) {
-        if(!batchable(source.find(f=>f.key===key)?.kind))await flush();
         globalThis.pyrusProgress?.update({completed:result.length,total:ordered.length,stage:'Заполнение полей',label:source.find(f=>f.key===key)?.label||'Поле',detail:''});
         // Check only preceding controllers, after earlier selected fields have been filled.
         const sourceIndex=source.findIndex(f=>f.key===key);
@@ -343,12 +326,6 @@
         }
         if(blocked){result.push({label:source.find(f=>f.key===key)?.label || 'Поле',status:'blocked',reason:'blocked-by-picker',message:'Не заполнено: предыдущий справочник или список не удалось перенести. Исправьте его и повторите перенос.'});continue;}
         let p = plan(source, overwrite).find(p => p.key === key);
-        // A previous scalar edit may reveal, remove or replace this editor on
-        // the next browser task. Settle the batch before treating it as absent.
-        if(pending.length && (!p || p.reason || !batchable(p.target?.kind))){
-          await flush();
-          p=plan(source,overwrite).find(p=>p.key===key);
-        }
         // Conditional controls may mount asynchronously after an earlier input/change.
         if (p?.deferred) {
           for(let attempt=0;attempt<6 && p.deferred;attempt++) {
@@ -367,29 +344,21 @@
           if(isPicker(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;
           continue;
         }
-        let flushAfterWrite=false;
         try {
           if(JSON.stringify(p.target.value)===JSON.stringify(p.value)){
             result.push({label:p.label,status:'dispatched',reason:'already-matched',message:'Значение уже совпадает с источником.'});continue;
           }
           await setValue(p.target, p.value);
-          pending.push({index:result.length,key,kind:p.target.kind,value:p.value});
-          result.push({label:p.label,status:'pending'});
-          // Bound each batch to yield to rendering on large forms.
-          flushAfterWrite=!batchable(p.target.kind) || pending.length>=20;
+          await waitForUpdate(p.target.kind==='pyrus-catalog');
+          if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
+          const resolved=plan(source,true).find(f=>f.key===key);
+          const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && (p.target.kind==='pyrus-table'?globalThis.pyrusTables.verify(resolved.target.el,p.value):JSON.stringify(resolved.target.value)===JSON.stringify(p.value)));
+          if(!accepted && isPicker(p.target.kind))blocked=true;
+          result.push({label:p.label,status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
         }
         catch (e) { if(p.target.kind==='pyrus-table'){const choiceError=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message);if(globalThis.pyrusTableStatus){globalThis.pyrusTableStatus.picker=globalThis.pyrusPickerStatus||null;globalThis.pyrusTableStatus.errorType=['TypeError','ReferenceError','RangeError'].includes(e.name)?e.name:'Error';}const reason=choiceError?e.message:/^table-(columns-ambiguous|columns-missing|source-empty|source-incomplete|extra-target-rows|add-row-ambiguous|row-not-added|cell-missing|editor-unsupported|cell-not-confirmed|not-confirmed)$/.test(e.message)?e.message:'table-write-failed';result.push({label:p.label,status:'error',reason,table:globalThis.pyrusTableStatus||null,message:'Таблица заполнена не полностью: '+reason+'. Остальные поля продолжают заполняться.'});continue;} if(isPicker(p.target.kind))blocked=true; const reason=['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(e.message)?e.message:'setter-failed'; result.push({label:p.label,status:'error',reason,message:reason==='choice-option-not-found'?'Точный вариант списка не найден. Исходный текст поиска восстановлен.':reason==='choice-ambiguous'?'Найдено несколько одинаковых вариантов списка. Выбор отменён.':reason==='choice-popup-ambiguous'?'Открыто несколько списков. Закройте лишние и повторите перенос.':'Не удалось установить значение. Скачайте отчёт диагностики.'}); }
-        if(flushAfterWrite)await flush(p.target.kind==='pyrus-catalog');
       }
-      await flush();
       const finalPlan=plan(source,true);
-      // A later controller can reset an earlier editor after its batch passed.
-      result.forEach((entry,index)=>{
-        if(entry.status!=='dispatched')return;
-        const resolved=finalPlan.find(f=>f.key===ordered[index]);
-        const accepted=Boolean(resolved?.target && !resolved.reason && (resolved.target.kind==='pyrus-table'?globalThis.pyrusTables.verify(resolved.target.el,resolved.value):JSON.stringify(resolved.target.value)===JSON.stringify(resolved.value)));
-        if(!accepted)Object.assign(entry,{status:'unverified',reason:'dom-value-mismatch',message:'Значение изменилось при заполнении формы. Проверьте поле вручную.'});
-      });
       globalThis.pyrusProgress?.update({completed:ordered.length,total:ordered.length,stage:'Проверка результата',label:'',detail:''});
       return result.map((entry,index)=>({...entry,sourceIndex:source.findIndex(f=>f.key===ordered[index]),matching:finalPlan.find(f=>f.key===ordered[index])?.matching||null}));
     }
