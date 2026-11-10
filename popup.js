@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+$('version').textContent='v'+chrome.runtime.getManifest().version;
 let snapshot, previewTab, busy=false, diagnostics=[], lastPage=null, lastPlan=null, lastStructure=null;
 let replacementPreview=null;
 let replacementTabActive=false,draftEdited=false;
@@ -151,6 +152,16 @@ action('structure',async()=>{
  const report={format:'pyrus-structure-debug',schemaVersion:2,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version,browser:navigator.userAgent,diagnostic:lastPage,structure:lastStructure};
  download(report,'pyrus-structure');
  status('Техническая структура скачана. Пришлите файл. Текст, значения, идентификаторы и адрес страницы не включены; CSS-классы включены.');
+});
+
+action('formHandlers',async()=>{
+ const [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+ if(!tab?.id||!/^https?:/.test(tab.url||''))throw new Error('Откройте форму Pyrus в обычной вкладке.');
+ const [response]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:inspectPyrusFormHandlers});
+ const report=response?.result;
+ if(!report?.scopeCount)throw new Error('На странице не найдена форма Pyrus. Откройте черновик и раскройте нужные разделы.');
+ download({...report,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version},'pyrus-form-handlers');
+ status('Диагностика заполнения скачана. Снимите отдельно обычный новый черновик и заполненную встроенную копию. Подпишите файлы и пришлите оба. Наличие обработчиков ещё не подтверждает возможность массового заполнения.');
 });
 action('pickerStructure',async()=>{
  const result=await page('pickerStructure');

@@ -2,6 +2,32 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
+
+test('form handler diagnostics run read only in the page world and export no source data',async()=>{
+ const {JSDOM}=require('jsdom');
+ const target=new JSDOM('<div class="formFieldBaseWrapper"><input value="SECRET_VALUE"></div>',{runScripts:'outside-only',url:'https://secret.test/task/SECRET_ID'}).window;
+ const ui=new JSDOM(fs.readFileSync(__dirname+'/popup.html','utf8'),{runScripts:'outside-only'}).window;
+ const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:target.location.href,fields:[{key:'SECRET_KEY',label:'SECRET_LABEL',kind:'text',value:'SECRET_SNAPSHOT'}]}};
+ let blob,filename,calls=0;
+ ui.Blob=Blob;ui.URL.createObjectURL=value=>{blob=value;return 'blob:test';};ui.URL.revokeObjectURL=()=>{};
+ ui.HTMLAnchorElement.prototype.click=function(){filename=this.download;};ui.setTimeout=()=>0;
+ ui.chrome={runtime:{getManifest:()=>({version:'0.9.10'})},storage:{session:{async get(key){return typeof key==='string'?{[key]:saved[key]}:{...saved};},async set(value){Object.assign(saved,value);},async remove(key){delete saved[key];}}},tabs:{query:async()=>[{id:10,url:target.location.href}]},scripting:{executeScript:async options=>{
+  calls++;assert.equal(options.world,'MAIN');assert.equal(options.target.tabId,10);assert.equal(options.files,undefined);
+  return [{result:target.eval('('+options.func.toString()+')')()}];
+ }}};
+ try{
+  ui.eval(fs.readFileSync(__dirname+'/form-handlers.js','utf8'));await ui.eval(fs.readFileSync(__dirname+'/popup.js','utf8'));
+  const before=target.document.body.innerHTML;
+  await ui.document.getElementById('formHandlers').onclick();
+  assert.equal(calls,1);assert.equal(target.document.body.innerHTML,before);assert.equal(ui.document.getElementById('version').textContent,'v0.9.10');
+  assert.match(filename,/^pyrus-form-handlers-/);
+  const json=await blob.text(),report=JSON.parse(json);
+  assert.equal(report.inspectionOnly,true);assert.equal(report.scopeCount,1);assert.ok(!json.includes('SECRET'));assert.ok(!json.includes('secret.test'));
+  assert.equal(saved.snapshot.fields[0].value,'SECRET_SNAPSHOT');
+  ui.chrome.tabs.query=async()=>[{id:10,url:'chrome://extensions'}];
+  await ui.document.getElementById('formHandlers').onclick();assert.equal(calls,1);
+ }finally{target.close();ui.close();}
+});
 test('popup diagnostics survives reopen and exports a report without page data',async()=>{
   const ids=[...fs.readFileSync(__dirname+'/popup.html','utf8').matchAll(/id="([^"]+)"/g)].map(m=>m[1]);
   const elements=Object.fromEntries(ids.map(id=>[id,{id,disabled:false,children:[],classList:{toggle(){}},querySelectorAll:()=>[],replaceChildren(){},append(){},value:'',checked:false}]));
