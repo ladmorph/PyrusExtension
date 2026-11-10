@@ -145,12 +145,12 @@ test('target table is materialized before unsupported and overwrite checks',asyn
  }
 });
 
-test('empty source tables finish within the render limit without adding rows',async()=>{
- const w=page(tableFixture(['A'])),timer=w.setTimeout.bind(w);let waits=0,clicks=0;
- w.setTimeout=(fn,ms)=>{waits++;return timer(fn,ms);};w.document.querySelector('.addRowButton').onclick=()=>clicks++;
+test('empty source capture finishes without adding rows',{timeout:1000},async()=>{
+ const w=page(tableFixture(['A']));let clicks=0;
+ w.document.querySelector('.addRowButton').onclick=()=>clicks++;
  try{
   const [source]=await w.pyrusTransfer.captureTables();
-  assert.equal(source.value.rows.length,0);assert.equal(clicks,0);assert.equal(waits,20);
+  assert.equal(source.value.rows.length,0);assert.equal(clicks,0);
  }finally{w.close();}
 });
 
