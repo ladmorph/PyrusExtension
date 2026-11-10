@@ -6,12 +6,14 @@ const vm=require('node:vm');
 test('form handler diagnostics run read only in the page world and export no source data',async()=>{
  const {JSDOM}=require('jsdom');
  const target=new JSDOM('<div class="formFieldBaseWrapper"><input value="SECRET_VALUE"></div>',{runScripts:'outside-only',url:'https://secret.test/task/SECRET_ID'}).window;
+ target.HTMLElement.prototype.getClientRects=()=>[{}];
  const ui=new JSDOM(fs.readFileSync(__dirname+'/popup.html','utf8'),{runScripts:'outside-only'}).window;
  const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:target.location.href,fields:[{key:'SECRET_KEY',label:'SECRET_LABEL',kind:'text',value:'SECRET_SNAPSHOT'}]}};
+ const extensionVersion=JSON.parse(fs.readFileSync(__dirname+'/manifest.json','utf8')).version;
  let blob,filename,calls=0;
  ui.Blob=Blob;ui.URL.createObjectURL=value=>{blob=value;return 'blob:test';};ui.URL.revokeObjectURL=()=>{};
  ui.HTMLAnchorElement.prototype.click=function(){filename=this.download;};ui.setTimeout=()=>0;
- ui.chrome={runtime:{getManifest:()=>({version:'0.9.10'})},storage:{session:{async get(key){return typeof key==='string'?{[key]:saved[key]}:{...saved};},async set(value){Object.assign(saved,value);},async remove(key){delete saved[key];}}},tabs:{query:async()=>[{id:10,url:target.location.href}]},scripting:{executeScript:async options=>{
+ ui.chrome={runtime:{getManifest:()=>({version:extensionVersion})},storage:{session:{async get(key){return typeof key==='string'?{[key]:saved[key]}:{...saved};},async set(value){Object.assign(saved,value);},async remove(key){delete saved[key];}}},tabs:{query:async()=>[{id:10,url:target.location.href}]},scripting:{executeScript:async options=>{
   calls++;assert.equal(options.world,'MAIN');assert.equal(options.target.tabId,10);assert.equal(options.files,undefined);
   return [{result:target.eval('('+options.func.toString()+')')()}];
  }}};
@@ -19,13 +21,23 @@ test('form handler diagnostics run read only in the page world and export no sou
   ui.eval(fs.readFileSync(__dirname+'/form-handlers.js','utf8'));await ui.eval(fs.readFileSync(__dirname+'/popup.js','utf8'));
   const before=target.document.body.innerHTML;
   await ui.document.getElementById('formHandlers').onclick();
-  assert.equal(calls,1);assert.equal(target.document.body.innerHTML,before);assert.equal(ui.document.getElementById('version').textContent,'v0.9.10');
+  assert.equal(calls,1);assert.equal(target.document.body.innerHTML,before);assert.equal(ui.document.getElementById('version').textContent,'v'+extensionVersion);
   assert.match(filename,/^pyrus-form-handlers-/);
   const json=await blob.text(),report=JSON.parse(json);
   assert.equal(report.inspectionOnly,true);assert.equal(report.scopeCount,1);assert.ok(!json.includes('SECRET'));assert.ok(!json.includes('secret.test'));
   assert.equal(saved.snapshot.fields[0].value,'SECRET_SNAPSHOT');
+  target.document.body.innerHTML='<div class="formView"><input value="SECRET_FIRST"></div><div class="formView"><input value="SECRET_SECOND"></div>';
+  filename=null;const multipleForms=target.document.body.innerHTML;
+  await ui.document.getElementById('formHandlers').onclick();
+  assert.equal(filename,null);assert.match(ui.document.getElementById('status').textContent,/текстовое поле/);
+  assert.equal(target.document.body.innerHTML,multipleForms);
+  const focused=target.document.querySelectorAll('input')[1];focused.focus();
+  await ui.document.getElementById('formHandlers').onclick();
+  assert.match(filename,/^pyrus-form-handlers-/);assert.equal(target.document.activeElement,focused);
+  const focusedReport=await blob.text();assert.equal(JSON.parse(focusedReport).context.selection,'focused-form');assert.ok(!focusedReport.includes('SECRET'));
+  const callsBeforeInvalidUrl=calls;
   ui.chrome.tabs.query=async()=>[{id:10,url:'chrome://extensions'}];
-  await ui.document.getElementById('formHandlers').onclick();assert.equal(calls,1);
+  await ui.document.getElementById('formHandlers').onclick();assert.equal(calls,callsBeforeInvalidUrl);
  }finally{target.close();ui.close();}
 });
 test('popup diagnostics survives reopen and exports a report without page data',async()=>{

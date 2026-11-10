@@ -160,8 +160,9 @@ action('formHandlers',async()=>{
  const [response]=await chrome.scripting.executeScript({target:{tabId:tab.id},world:'MAIN',func:inspectPyrusFormHandlers});
  const report=response?.result;
  if(!report?.scopeCount)throw new Error('На странице не найдена форма Pyrus. Откройте черновик и раскройте нужные разделы.');
+ if(report.needsFocus)throw new Error('На странице несколько форм. Нажмите в обычное текстовое поле нужного черновика, затем снова откройте расширение и скачайте диагностику.');
  download({...report,createdAt:new Date().toISOString(),extension:chrome.runtime.getManifest().version},'pyrus-form-handlers');
- status('Диагностика заполнения скачана. Снимите отдельно обычный новый черновик и заполненную встроенную копию. Подпишите файлы и пришлите оба. Наличие обработчиков ещё не подтверждает возможность массового заполнения.');
+ status('Диагностика заполнения скачана. Перед каждым снимком нажмите в текстовое поле нужной формы. Пришлите отдельные снимки обычного нового черновика и встроенной копии. Наличие обработчиков ещё не подтверждает возможность массового заполнения.');
 });
 action('pickerStructure',async()=>{
  const result=await page('pickerStructure');
