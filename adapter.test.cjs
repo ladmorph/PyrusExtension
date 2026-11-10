@@ -27,16 +27,3 @@ test('unchecked checkbox is retained as false',()=>{
   const row=adapter([{label:'Доступ',kind:'checkbox',checked:true}]).preview(source,true)[0];
   assert.equal(row.value,false); assert.equal(row.reason,'');
 });
-test('diagnostic report excludes labels and values',()=>{
-  const diagnostic=adapter([{label:'SECRET_EMPLOYEE',value:'SECRET_VALUE'},{label:'Password',kind:'password',value:'SECRET_PASSWORD'}]).diagnose();
-  const json=JSON.stringify(diagnostic);
-  assert.equal(diagnostic.totalControls,2);
-  assert.equal(diagnostic.recognized,1);
-  assert.ok(!json.includes('SECRET'));
-  assert.ok(!json.includes('Password'));
-});
-test('diagnostic lists ambiguous controls and hidden unsupported fields',()=>{
-  const diagnostic=adapter([{label:'Имя'},{label:'Имя'},{label:'Файл',kind:'file'}]).diagnose();
-  assert.equal(diagnostic.ambiguousControls,2);
-  assert.equal(diagnostic.controls[2].recognized,false);
-});

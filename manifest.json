@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Pyrus — перенос полей",
-  "version": "0.9.11",
-  "description": "Перенос полей между задачами одного шаблона в один шаг на черновике.",
+  "version": "0.10.0",
+  "description": "Перенос и дозаполнение полей, предзаполнение по ссылке и замена текста в формах Pyrus.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -12,8 +12,5 @@
     "default_popup": "popup.html",
     "default_title": "Перенос полей Pyrus"
   },
-  "minimum_chrome_version": "102",
-  "background": {
-    "service_worker": "background.js"
-  }
+  "minimum_chrome_version": "102"
 }

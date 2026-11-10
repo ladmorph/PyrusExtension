@@ -20,7 +20,7 @@ test('no eligible sections returns without scheduling waits',async()=>{
 test('opens nested sections and never collapses open sections',async()=>{
  const f=fixture();let nested;
  const parent=f.node('parent',{onClick:()=>{nested=f.node('child');}});
- const result=await f.api.run();assert.equal(result.clicked,2);assert.equal(result.confirmedOpen,2);assert.equal(result.remaining,0);
+ const result=await f.api.run();assert.equal(result.clicked,2);assert.equal(parent.state,'true');assert.equal(nested.state,'true');assert.equal(result.remaining,0);
  await f.api.run();assert.equal(parent.clicks,1);assert.equal(nested.clicks,1);
 });
 test('excludes navigation, outside-form controls and comboboxes',async()=>{

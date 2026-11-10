@@ -54,37 +54,28 @@
     if(map.some(i=>i<0))throw Error('table-columns-missing');
     return map;
   }
-  function verify(root,value){
+  function verify(root,value,allowExtraRows=false){
     try{const actual=data(root),map=mapping(value.columns,actual.columns);
-      return actual.rows.length===value.rows.length&&value.rows.every((row,r)=>row.every((v,c)=>JSON.stringify(v)===JSON.stringify(actual.rows[r]?.[map[c]])));
+      return (allowExtraRows?actual.rows.length>=value.rows.length:actual.rows.length===value.rows.length)&&value.rows.every((row,r)=>row.every((v,c)=>JSON.stringify(v)===JSON.stringify(actual.rows[r]?.[map[c]])));
     }catch{return false;}
   }
-  async function apply(root,value,setValue,prepared=false){
-    globalThis.pyrusTableStatus={rows:value.rows.length,columns:value.columns.length,sourceRowWidths:value.rows.map(row=>row.length),rowIndex:null,columnIndex:null,confirmedCells:0};
-    const localSnapshot=()=>{
-      const state=globalThis.pyrusTableStatus;
-      const currentRows=rows(root),row=state.rowIndex===null?null:currentRows[state.rowIndex];
-      const cell=row&&state.columnIndex!==null?cells(row)[state.columnIndex]:null;
-      const scope=cell||row||root;
-      const nodes=[scope,...scope.querySelectorAll(cell?'*':'tbody,tr,.addRowButton,input,[contenteditable]'),...document.querySelectorAll('.inputCompletion__popup,.cellRadioButton__popuper,.cellRadioButton__popuper .dropdownList__control,[role="listbox"]')].slice(0,40);
-      globalThis.pyrusTableStatus.context=nodes.map(el=>({tag:el.tagName,classes:[...el.classList].slice(0,8),visible:Boolean(visible(el)),children:el.children.length,disabled:Boolean(el.disabled),readOnly:Boolean(el.readOnly)}));
-      globalThis.pyrusTableStatus.renderedRows=currentRows.length;
-    };
-    try{
+  async function apply(root,value,setValue,prepared=false,overwrite=true){
     // The transfer already prepared this exact root before its overwrite check.
     // A second scroll and fixed delay can start the same rendering work again.
     if(!prepared){root.scrollIntoView?.({block:'center',behavior:'instant'});await pause(250);}
     const map=mapping(value.columns,columns(root));
     if(!value.rows.length)throw Error('table-source-empty');
     if(value.rows.some(row=>row.length!==value.columns.length))throw Error('table-source-incomplete');
-    if(data(root).rows.length>value.rows.length)throw Error('table-extra-target-rows');
+    const populated=v=>typeof v==='string'?v.trim().length>0:v!==''&&v!==false&&v!=null;
+    const extraRows=rows(root).slice(value.rows.length).filter(row=>cells(row).some(cell=>populated(read(cell)))).length;
+    if(overwrite&&extraRows)throw Error('table-extra-target-rows');
+    const expected={columns:[...value.columns],rows:value.rows.map(row=>[...row])};
+    let preservedCells=0,writtenCells=0;
     for(let r=0;r<value.rows.length;r++){
-      globalThis.pyrusTableStatus.rowIndex=r;globalThis.pyrusTableStatus.phase='find-row';
       let current=rowAt(root,r);
       if(!current){
         const buttons=own(root,'.addRowButton').filter(visible);
         if(buttons.length!==1)throw Error('table-add-row-ambiguous');
-        globalThis.pyrusTableStatus.phase='add-row';
         buttons[0].scrollIntoView?.({block:'nearest',behavior:'instant'});
         buttons[0].click();
         for(let attempt=0;attempt<20&&!rowAt(root,r);attempt++)await pause(100);
@@ -92,11 +83,12 @@
       }
       for(let c=0;c<map.length;c++){
         globalThis.pyrusProgress?.update({detail:'Таблица · строка '+(r+1)+' из '+value.rows.length+' · столбец '+(c+1)+' из '+map.length});
-        globalThis.pyrusTableStatus.phase='write-cell';
-        globalThis.pyrusTableStatus.rowIndex=r;globalThis.pyrusTableStatus.columnIndex=c;
         const cell=cells(rowAt(root,r)||{children:[]})[map[c]],valueToWrite=value.rows[r][c];
         if(!cell)throw Error('table-cell-missing');
-        if(JSON.stringify(read(cell))===JSON.stringify(valueToWrite))continue;
+        const currentValue=read(cell);
+        if(JSON.stringify(currentValue)===JSON.stringify(valueToWrite))continue;
+        if(!overwrite&&populated(currentValue)){expected.rows[r][c]=currentValue;preservedCells++;continue;}
+        if(!populated(currentValue)&&!populated(valueToWrite)){expected.rows[r][c]=currentValue;continue;}
         let el=cell.querySelector('.cellString__content[contenteditable="true"],input:not(.cellField__focusTarget):not([type="hidden"]),textarea,select');
         if(!el){cell.click();await pause(100);el=cell.querySelector('[contenteditable="true"],input:not(.cellField__focusTarget):not([type="hidden"]),textarea,select');}
         if(!el||el.disabled||el.readOnly)throw Error('table-editor-unsupported');
@@ -108,16 +100,11 @@
         let accepted=false;
         for(let attempt=0;attempt<15;attempt++){const live=cells(rowAt(root,r)||{children:[]})[map[c]];if(live&&JSON.stringify(read(live))===JSON.stringify(valueToWrite)){accepted=true;break;}await pause(100);}
         if(!accepted)throw Error('table-cell-not-confirmed');
-        globalThis.pyrusTableStatus.confirmedCells++;
+        writtenCells++;
       }
     }
-    if(!verify(root,value))throw Error('table-not-confirmed');
-    }catch(error){
-      // Structural diagnostics are only needed on failure. Walking every editor
-      // and measuring its visibility before each successful cell forces layout.
-      try{localSnapshot();}catch{}
-      throw error;
-    }
+    if(!verify(root,expected,!overwrite))throw Error('table-not-confirmed');
+    return {expected,allowExtraRows:!overwrite,preservedCells,writtenCells,extraRows};
   }
   async function prepareCapture(){
     const positions=[...new Set([document.scrollingElement,...document.querySelectorAll('*')])].filter(el=>el&&(el===document.scrollingElement||el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth||el.scrollTop||el.scrollLeft)).map(el=>[el,el.scrollTop,el.scrollLeft]);

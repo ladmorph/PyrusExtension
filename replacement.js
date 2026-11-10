@@ -1,5 +1,5 @@
 (() => {
- if(globalThis.pyrusReplacement)return;
+ if(globalThis.pyrusReplacement?.version===2)return;
  let plan=null;
  function fields(readback=false){
   const tables=globalThis.pyrusTransfer.replacementTables();
@@ -28,10 +28,8 @@
   return candidates.length===1?candidates[0]:null;
  }
  const equal=(a,b)=>typeof a==='string'&&typeof b==='string'?a.replace(/\r\n/g,'\n')===b.replace(/\r\n/g,'\n'):a===b;
- function verification(entry,target){
-  return {targetFound:Boolean(target),originalConnected:entry.el.isConnected,sameAsBefore:target?equal(target.value,entry.before):false,expectedLength:entry.after.length,actualLength:typeof target?.value==='string'?target.value.length:null,normalizedWhitespaceEqual:typeof target?.value==='string'?target.value.replace(/\s+/g,' ').trim()===entry.after.replace(/\s+/g,' ').trim():false};
- }
  globalThis.pyrusReplacement={
+  version:2,
   preview(options){
    if(!options || typeof options.find!=='string' || !options.find.length || typeof options.replace!=='string' || !['exact','contains'].includes(options.mode))throw Error('Введите непустой текст поиска и выберите режим замены.');
    const entries=fields().flatMap(f=>{
@@ -48,11 +46,11 @@
    const currentPlan=plan;plan=null;const results=[];
    for(const [index,entry] of currentPlan.entries.entries()){
     globalThis.pyrusProgress?.update({completed:index,total:currentPlan.entries.length,stage:'Замена значений',label:entry.label,detail:''});
-    const finish=(status,reason,extra={})=>results.push({status,reason,label:entry.label,sourceIndex:index,replacement:{kind:entry.kind,table:Boolean(entry.cell),rowIndex:entry.r??null,columnIndex:entry.c??null,...extra}});
+    const finish=(status,reason)=>results.push({status,reason,label:entry.label,sourceIndex:index});
     if(entry.reason){finish('skipped','replacement-unsupported');continue;}
     if(location.href!==currentPlan.url){finish('skipped','replacement-page-changed');break;}
     const target=live(entry);
-    if(!target || target.value!==entry.before){finish('skipped','replacement-value-changed',{verification:verification(entry,target)});continue;}
+    if(!target || target.value!==entry.before){finish('skipped','replacement-value-changed');continue;}
     try{
      const option=target.kind==='select'?selectOption(target,entry.after):null;
      if(target.kind==='select'&&!option){finish('skipped','replacement-option-changed');continue;}
@@ -65,8 +63,8 @@
       stable=updated&&equal(updated.value,entry.after)?stable+1:0;
       if(stable>=3){accepted=true;break;}
      }
-     finish(accepted?'dispatched':'error',accepted?'dom-value-matched':'replacement-not-confirmed',{verification:verification(entry,updated)});
-    }catch(error){finish('error',['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(error.message)?error.message:'replacement-write-failed',{verification:verification(entry,live(entry,true))});}
+     finish(accepted?'dispatched':'error',accepted?'dom-value-matched':'replacement-not-confirmed');
+    }catch(error){finish('error',['choice-ambiguous','choice-popup-ambiguous','choice-option-not-found'].includes(error.message)?error.message:'replacement-write-failed');}
    }
    globalThis.pyrusProgress?.update({completed:results.length,total:currentPlan.entries.length,stage:'Проверка результата',label:'',detail:''});
    return results;

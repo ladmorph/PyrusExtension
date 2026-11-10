@@ -1,159 +1,83 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const vm=require('node:vm');
+const {JSDOM}=require('jsdom');
+const code=file=>fs.readFileSync(__dirname+'/'+file,'utf8');
+const tick=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-test('form handler diagnostics run read only in the page world and export no source data',async()=>{
- const {JSDOM}=require('jsdom');
- const target=new JSDOM('<div class="formFieldBaseWrapper"><input value="SECRET_VALUE"></div>',{runScripts:'outside-only',url:'https://secret.test/task/SECRET_ID'}).window;
- target.HTMLElement.prototype.getClientRects=()=>[{}];
- const ui=new JSDOM(fs.readFileSync(__dirname+'/popup.html','utf8'),{runScripts:'outside-only'}).window;
- const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:target.location.href,fields:[{key:'SECRET_KEY',label:'SECRET_LABEL',kind:'text',value:'SECRET_SNAPSHOT'}]}};
- const extensionVersion=JSON.parse(fs.readFileSync(__dirname+'/manifest.json','utf8')).version;
- let blob,filename,calls=0;
- ui.Blob=Blob;ui.URL.createObjectURL=value=>{blob=value;return 'blob:test';};ui.URL.revokeObjectURL=()=>{};
- ui.HTMLAnchorElement.prototype.click=function(){filename=this.download;};ui.setTimeout=()=>0;
- ui.chrome={runtime:{getManifest:()=>({version:extensionVersion})},storage:{session:{async get(key){return typeof key==='string'?{[key]:saved[key]}:{...saved};},async set(value){Object.assign(saved,value);},async remove(key){delete saved[key];}}},tabs:{query:async()=>[{id:10,url:target.location.href}]},scripting:{executeScript:async options=>{
-  calls++;assert.equal(options.world,'MAIN');assert.equal(options.target.tabId,10);assert.equal(options.files,undefined);
-  return [{result:target.eval('('+options.func.toString()+')')()}];
+async function popup(saved={},execute){
+ const w=new JSDOM(code('popup.html'),{runScripts:'outside-only',url:'https://extension.test/popup.html'}).window;
+ const close=w.close.bind(w),calls=[],opened=[];let url='https://pyrus.test/t#uf42',closed=false;
+ w.chrome={runtime:{getManifest:()=>JSON.parse(code('manifest.json'))},storage:{session:{
+  get:async keys=>Object.fromEntries((typeof keys==='string'?[keys]:keys).map(key=>[key,saved[key]])),
+  set:async values=>Object.assign(saved,values),remove:async keys=>{for(const key of Array.isArray(keys)?keys:[keys])delete saved[key];}
+ }},tabs:{query:async()=>[{id:7,url}],create:async tab=>opened.push(tab)},scripting:{executeScript:async options=>{
+  calls.push(options);if(execute)return execute(options,url);if(options.files)return [];
+  const method=options.args[0];return [{result:method==='apply'||method==='replaceApply'?{queued:true}:{url,recognized:1,hasValues:true,data:method==='replacePreview'?{token:'token',ready:1,items:[{label:'Описание',before:'до',after:''}]}:[]}}];
  }}};
+ w.close=()=>{closed=true;};w.eval(code('prefill.js'));await w.eval(code('popup.js'));
+ return {w,saved,calls,opened,close,el:id=>w.document.getElementById(id),setUrl:value=>{url=value;},isClosed:()=>closed};
+}
+
+test('popup removes old reports without losing saved fields or replacement settings',async()=>{
+ const saved={snapshot:{adapterVersion:'pyrus-dom-v3',url:'https://pyrus.test/t#id1',time:Date.now(),fields:[{key:'name',label:'Название',kind:'text',value:'Сохранить'}],sourceStructure:{old:true}},diagnostics:[{}],lastPage:{},lastPlan:{},catalogDiagnosticSalt:'old',tryPrefill:false,replacementDraft:{find:'a\nb',replace:'',mode:'contains',tab:'replacement'}};
+ const ui=await popup(saved);try{
+  assert.equal(saved.snapshot.fields[0].value,'Сохранить');assert.equal(saved.snapshot.sourceStructure,undefined);
+  for(const key of ['diagnostics','lastPage','lastPlan','catalogDiagnosticSalt'])assert.equal(saved[key],undefined);
+  assert.equal(ui.el('replaceFind').value,'a\nb');assert.equal(ui.el('replaceContains').checked,true);assert.equal(ui.el('replacementPanel').hidden,false);
+  assert.equal(ui.el('tryPrefill').checked,false);ui.el('tryPrefill').checked=true;await ui.el('tryPrefill').onchange();assert.equal(saved.tryPrefill,true);
+  assert.equal(ui.w.document.querySelector('#diagnose,#export,#formHandlers,#debug'),null);assert.equal(JSON.parse(code('manifest.json')).background,undefined);
+  await ui.el('replacePreview').onclick();
+  assert.deepEqual([...ui.calls.find(call=>call.files).files],['tables.js','adapter.js','expander.js','transfer-runner.js','replacement.js']);
+  assert.equal(ui.el('replaceApply').disabled,false);assert.match(ui.el('replaceResults').textContent,/Пустое значение/);
+  ui.el('replaceExact').checked=true;await ui.el('replaceExact').onchange();assert.equal(ui.el('replaceApply').disabled,true);assert.equal(saved.replacementDraft.mode,'exact');
+  await ui.el('replaceFindClear').onclick();assert.equal(ui.el('replaceFind').value,'');assert.equal(ui.el('replacePreview').disabled,true);
+ }finally{ui.close();}
+});
+
+test('whole-form fill keeps the usual path for an existing draft and blocks the source',async()=>{
+ const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:'https://pyrus.test/t#id1',fields:[{key:'name',label:'Название',kind:'text',value:'Текст'}]}};
+ const ui=await popup(saved);try{
+  await ui.el('fillAll').onclick();
+  assert.deepEqual(ui.calls.filter(call=>call.args).map(call=>call.args[0]),['preview','prefill','apply']);
+  assert.equal(ui.calls.at(-1).args[2].fastPrefill,null);assert.equal(ui.isClosed(),true);assert.equal(ui.calls.some(call=>call.world==='MAIN'),false);
+  ui.setUrl(saved.snapshot.url);const before=ui.calls.length;await ui.el('fillAll').onclick();assert.equal(ui.calls.length,before);assert.match(ui.el('status').textContent,/Открыт источник/);
+ }finally{ui.close();}
+});
+
+test('ready native links stay on the current server and open without changing the draft',async()=>{
+ const ui=await popup();try{
+  ui.el('nativePrefillUrl').value='https://other.test/t#uf42&f11=x';await ui.el('openNativePrefill').onclick();assert.equal(ui.opened.length,0);assert.match(ui.el('status').textContent,/тот же сервер/);
+  ui.el('nativePrefillUrl').value='https://pyrus.test/t#uf42&f11='+encodeURIComponent('строка & +');await ui.el('openNativePrefill').onclick();assert.equal(ui.opened.length,1);assert.equal(new URL(ui.opened[0].url).origin,'https://pyrus.test');assert.equal(ui.isClosed(),true);
+ }finally{ui.close();}
+});
+
+test('page transfer survives popup closure, waits for focus and releases its running lock',async()=>{
+ const w=new JSDOM('<body></body>',{runScripts:'outside-only'}).window;let focused=false,called=0;
+ w.document.hasFocus=()=>focused;w.eval(code('transfer-runner.js'));
  try{
-  ui.eval(fs.readFileSync(__dirname+'/form-handlers.js','utf8'));await ui.eval(fs.readFileSync(__dirname+'/popup.js','utf8'));
-  const before=target.document.body.innerHTML;
-  await ui.document.getElementById('formHandlers').onclick();
-  assert.equal(calls,1);assert.equal(target.document.body.innerHTML,before);assert.equal(ui.document.getElementById('version').textContent,'v'+extensionVersion);
-  assert.match(filename,/^pyrus-form-handlers-/);
-  const json=await blob.text(),report=JSON.parse(json);
-  assert.equal(report.inspectionOnly,true);assert.equal(report.scopeCount,1);assert.ok(!json.includes('SECRET'));assert.ok(!json.includes('secret.test'));
-  assert.equal(saved.snapshot.fields[0].value,'SECRET_SNAPSHOT');
-  target.document.body.innerHTML='<div class="formView"><input value="SECRET_FIRST"></div><div class="formView"><input value="SECRET_SECOND"></div>';
-  filename=null;const multipleForms=target.document.body.innerHTML;
-  await ui.document.getElementById('formHandlers').onclick();
-  assert.equal(filename,null);assert.match(ui.document.getElementById('status').textContent,/текстовое поле/);
-  assert.equal(target.document.body.innerHTML,multipleForms);
-  const focused=target.document.querySelectorAll('input')[1];focused.focus();
-  await ui.document.getElementById('formHandlers').onclick();
-  assert.match(filename,/^pyrus-form-handlers-/);assert.equal(target.document.activeElement,focused);
-  const focusedReport=await blob.text();assert.equal(JSON.parse(focusedReport).context.selection,'focused-form');assert.ok(!focusedReport.includes('SECRET'));
-  const callsBeforeInvalidUrl=calls;
-  ui.chrome.tabs.query=async()=>[{id:10,url:'chrome://extensions'}];
-  await ui.document.getElementById('formHandlers').onclick();assert.equal(calls,callsBeforeInvalidUrl);
- }finally{target.close();ui.close();}
-});
-test('popup diagnostics survives reopen and exports a report without page data',async()=>{
-  const ids=[...fs.readFileSync(__dirname+'/popup.html','utf8').matchAll(/id="([^"]+)"/g)].map(m=>m[1]);
-  const elements=Object.fromEntries(ids.map(id=>[id,{id,disabled:false,children:[],classList:{toggle(){}},querySelectorAll:()=>[],replaceChildren(){},append(){},value:'',checked:false}]));
-  const saved={snapshot:{adapterVersion:'pyrus-dom-v3',time:Date.now(),url:'https://secret.example/task/123?token=SECRET',fields:[{key:'label:SECRET_NAME:text',label:'SECRET_NAME',kind:'text',value:'SECRET_VALUE'}]}};
-  const storage={async get(keys){return typeof keys==='string'?{[keys]:saved[keys]}:{...saved};},async set(obj){const next={...saved,...obj};if(JSON.stringify(next).length>200000)throw new Error('Session storage quota bytes exceeded');Object.assign(saved,obj);},async remove(keys){for(const k of Array.isArray(keys)?keys:[keys])delete saved[k];}};
-  saved.snapshot.sourceStructure={legacyTree:'x'.repeat(300000)};
-  saved.diagnostics=[{action:'old',details:{large:'x'.repeat(300000)}}];
-  let blob,downloaded=false;
-  class TestURL extends URL { static createObjectURL(b){blob=b;return 'blob:test';} static revokeObjectURL(){} }
-  const context={document:{getElementById:id=>elements[id],querySelectorAll:()=>ids.map(id=>elements[id]).filter(e=>['capture','preview','apply','diagnose','export','clearLogs','clear','selectAll','selectNone'].includes(e.id)),createElement:()=>({click(){downloaded=true;}})},chrome:{storage:{session:storage},runtime:{getManifest:()=>({version:'0.2.0'})},tabs:{query:async()=>[{id:1,url:'https://secret.example/task/123'}]},scripting:{executeScript:async opts=>opts.files?[]:[{result:{url:'https://secret.example/task/123',data:{},diagnostic:{totalControls:4,recognized:2}}}]}},navigator:{userAgent:'TestBrowser'},URL:TestURL,Blob,setTimeout:()=>0};
-  vm.createContext(context);const code=fs.readFileSync(__dirname+'/popup.js','utf8');
-  await vm.runInContext(code,context);
-  assert.equal(saved.snapshot.sourceStructure,undefined);
-  assert.equal(saved.snapshot.fields[0].value,'SECRET_VALUE');
-  await elements.diagnose.onclick();
-  assert.equal(saved.diagnostics[0].action,'diagnose');
-  // Reopen popup: persisted logs and counts must be restored.
-  await vm.runInContext(code,vm.createContext({...context}));
-  assert.match(elements.logCount.textContent,/1/);
-  await elements.export.onclick();
-  assert.ok(downloaded);
-  const text=await blob.text(), report=JSON.parse(text);
-  assert.equal(report.source.count,1);
-  assert.equal(report.schemaVersion,2);
-  assert.equal(report.structures,undefined);
-  assert.ok(text.length<6000);
-
-
-
-  assert.equal(report.lastPage.recognized,2);
-  assert.ok(!text.includes('SECRET'));
-  assert.ok(!text.includes('secret.example'));
-  // Target with zero recognized fields must never be advertised as ready.
-  context.chrome.tabs.query=async()=>[{id:1,url:'https://secret.example/task/other'}];
-  context.chrome.scripting.executeScript=async opts=>opts.files?[]:[{result:{url:'https://secret.example/task/other',data:[{label:'SECRET_NAME',key:'secret',reason:'missing',deferred:true}],diagnostic:{totalControls:12,recognized:0}}}];
-  await elements.preview.onclick();
-  assert.match(elements.status.textContent,/Перенос заблокирован/);
-  assert.equal(elements.apply.disabled,true);
-  const calls=[];
-  context.chrome.scripting.executeScript=async opts=>{
-    if(opts.files)return [];
-    calls.push(opts.args);
-    return [{result:{url:'https://secret.example/task/other',tabId:1,data:opts.args[0]==='apply'?[{status:'dispatched',reason:'dom-value-matched',label:'SECRET_NAME',sourceIndex:0,message:'Готово'}]:[{key:'label:SECRET_NAME:text',label:'SECRET_NAME',reason:''}],diagnostic:{recognized:1}}}];
-  };
-  await elements.fillAll.onclick();
-  assert.deepEqual(calls.map(args=>args[0]),['preview','apply']);
-  assert.equal(calls[1][1][1][0],'label:SECRET_NAME:text');
-  assert.match(elements.status.textContent,/Готово: 1/);
-  let closed=false;context.window={close(){closed=true;}};
-  context.chrome.scripting.executeScript=async opts=>opts.files?[]:[{result:opts.args[0]==='apply'?{queued:true}:{url:'https://secret.example/task/other',data:[],diagnostic:{recognized:1}}}];
-  // Recreate the popup context so window.close is available.
-  await vm.runInContext(code,vm.createContext({...context}));
-  await elements.fillAll.onclick();
-  assert.equal(closed,true);
-  for(let i=0;i<40;i++)await elements.diagnose.onclick();
-  assert.ok(saved.diagnostics.length<=30);
-  await elements.clearLogs.onclick();
-  assert.equal(saved.diagnostics,undefined);
+  assert.equal(w.pyrusTransferRunner.start(async()=>{called++;return {data:[{status:'dispatched'}]};}).queued,true);assert.equal(w.chrome,undefined);
+  assert.throws(()=>w.pyrusTransferRunner.start(async()=>{}),/уже выполняется/);await tick(130);assert.equal(called,0);focused=true;await tick(130);
+  assert.equal(called,1);assert.match(w.document.body.textContent,/Готово: 1/);assert.equal(w.pyrusProgress,undefined);
+  w.document.querySelector('button').click();assert.equal(w.document.querySelector('.pyrus-operation-progress'),null);
+  assert.equal(w.pyrusTransferRunner.start(async()=>({data:[]})).queued,true);await tick(120);
+ }finally{w.close();}
 });
 
-test('page transfer waits for page focus and persists completion independently of popup',async()=>{
- const {JSDOM}=require('jsdom');
- const dom=new JSDOM('<body></body>',{runScripts:'outside-only'}),w=dom.window;
- let focused=false,called=0;const messages=[];
- w.document.hasFocus=()=>focused;
- w.chrome={runtime:{sendMessage:async m=>{messages.push(m);return {ok:true};}}};
- w.eval(fs.readFileSync(__dirname+'/transfer-runner.js','utf8'));
- const pending=w.pyrusTransferRunner.start(async()=>{called++;return {data:[{status:'dispatched',sourceIndex:0}],diagnostic:{recognized:1}};});
- assert.equal(pending.queued,true);
- assert.throws(()=>w.pyrusTransferRunner.start(async()=>{}),/уже выполняется/);
- await new Promise(r=>setTimeout(r,150));assert.equal(called,0);
- focused=true;
- await new Promise(r=>setTimeout(r,180));assert.equal(called,1);
- assert.equal(messages[0].type,'pyrus-transfer-finished');
- assert.equal(messages[0].results[0].status,'dispatched');
- assert.match(w.document.body.textContent,/Готово: 1/);w.close();
+test('progress shows fields, cell detail and all results without storing reports',async()=>{
+ const w=new JSDOM('<body></body>',{runScripts:'outside-only'}).window;w.document.hasFocus=()=>true;w.eval(code('transfer-runner.js'));
+ let finish;const pending=new Promise(resolve=>{finish=resolve;});try{
+  w.pyrusTransferRunner.start(async()=>{w.pyrusProgress.update({total:4,completed:1,stage:'Заполнение полей',label:'Описание',detail:'Таблица · строка 2 из 5'});await pending;return {data:[{status:'dispatched'},...Array.from({length:5},(_,i)=>({status:'partial',label:'Таблица '+i,message:'Сохранены значения '+i}))]};});
+  assert.equal(w.document.querySelector('[role=progressbar]').hasAttribute('aria-valuenow'),false);await tick(130);
+  assert.equal(w.document.querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'25');assert.match(w.document.body.textContent,/строка 2 из 5/);
+  finish();await tick(20);assert.equal(w.pyrusProgress,undefined);assert.match(w.document.body.textContent,/Завершено с замечаниями/);assert.match(w.document.querySelector('details').textContent,/Сохранены значения 4/);assert.equal(w.document.querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'100');
+ }finally{w.close();}
 });
 
-test('background persists diagnostics after popup closure and ignores external senders',async()=>{
- let listener;const saved={diagnostics:[{action:'transfer-start'}]};
- const context={chrome:{runtime:{id:'test',onMessage:{addListener(fn){listener=fn;}}},storage:{session:{get:async()=>saved,set:async data=>Object.assign(saved,data)}}}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),context);
- const message={type:'pyrus-transfer-finished',diagnostic:{recognized:2},results:[{status:'dispatched'}]};
- assert.equal(listener(message,{id:'other',tab:{id:1}},()=>{}),undefined);
- await new Promise(resolve=>listener(message,{id:'test',tab:{id:1}},resolve));
- assert.equal(saved.lastPage.recognized,2);
- assert.deepEqual(saved.diagnostics.map(e=>e.action),['transfer-start','apply','transfer']);
-});
-test('progress shows measured fields, table detail, warnings and cleans up its reporter',async()=>{
- const {JSDOM}=require('jsdom');const dom=new JSDOM('<body></body>',{runScripts:'outside-only'}),w=dom.window;
- w.document.hasFocus=()=>true;const messages=[];w.chrome={runtime:{sendMessage:async m=>{messages.push(m);return {ok:true};}}};
- w.eval(fs.readFileSync(__dirname+'/transfer-runner.js','utf8'));
- let finish;const pending=new Promise(resolve=>{finish=resolve;});
- w.pyrusTransferRunner.start(async()=>{
-  w.pyrusProgress.update({total:4,completed:1,stage:'Заполнение полей',label:'Поле примера'});
-  w.pyrusProgress.update({detail:'Таблица · строка 2 из 5'});
-  await pending;
-  return {data:[{status:'dispatched'},{status:'error'},{status:'dispatched'},{status:'dispatched'}],diagnostic:{recognized:4}};
- });
- assert.equal(w.document.querySelector('[role=progressbar]').hasAttribute('aria-valuenow'),false);
- await new Promise(r=>setTimeout(r,150));
- assert.equal(w.document.querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'25');
- assert.match(w.document.body.textContent,/1 из 4 · 25%/);assert.match(w.document.body.textContent,/строка 2 из 5/);
- finish();await new Promise(r=>setTimeout(r,25));
- assert.equal(w.document.querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'100');
- assert.match(w.document.body.textContent,/Завершено с замечаниями/);assert.equal(w.pyrusProgress,undefined);
- assert.equal(messages[0].mode,'transfer');w.document.querySelector('button').click();assert.equal(w.document.querySelector('.pyrus-operation-progress'),null);w.close();
-});
-test('background separates replacement results from earlier transfer attempts',async()=>{
- let listener;const saved={diagnostics:[{action:'transfer-start'},{action:'transfer',details:{results:[{status:'dispatched'}]}},{action:'replacement-start'}]};
- const context={chrome:{runtime:{id:'test',onMessage:{addListener(fn){listener=fn;}}},storage:{session:{get:async()=>saved,set:async data=>Object.assign(saved,data)}}}};
- vm.runInNewContext(fs.readFileSync(__dirname+'/background.js','utf8'),context);
- const message={type:'pyrus-transfer-finished',mode:'replacement',diagnostic:{recognized:2},results:[{status:'error',reason:'replacement-not-confirmed',replacement:{kind:'text',verification:{targetFound:true}}}]};
- await new Promise(resolve=>listener(message,{id:'test',tab:{id:1}},resolve));
- assert.deepEqual(saved.diagnostics.slice(-2).map(e=>e.action),['replaceApply','replacement']);
- assert.equal(saved.diagnostics.at(-1).details.results[0].replacement.verification.targetFound,true);
+test('operation errors keep changes visible and restore the previous progress reporter',async()=>{
+ const w=new JSDOM('<input value="сохранить">',{runScripts:'outside-only'}).window;w.document.hasFocus=()=>true;w.eval(code('transfer-runner.js'));
+ const previous={update(){}};w.pyrusProgress=previous;try{
+  w.pyrusTransferRunner.start(async()=>{throw Error('private failure');});await tick(130);
+  assert.equal(w.pyrusProgress,previous);assert.equal(w.document.querySelector('input').value,'сохранить');assert.match(w.document.body.textContent,/Операция прервана/);assert.ok(!w.document.body.textContent.includes('private failure'));
+ }finally{w.close();}
 });

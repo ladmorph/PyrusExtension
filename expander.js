@@ -25,7 +25,6 @@
   const titleText=el=>String(el.querySelector('.formFieldTitle__textValue')?.textContent || el.textContent || '').normalize('NFKC').replace(/\s+/g,' ').replace(/\s*\*\s*$/,'').trim();
   globalThis.pyrusExpand = {
     openedTitles:()=>[...new Set([...document.querySelectorAll('.formFieldGroupTitle_expanded')].filter(el=>el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden').map(titleText).filter(Boolean))],
-    inspect: () => ({eligibleCollapsed:candidates().length,totalCollapsedMarkers:document.querySelectorAll('details:not([open]) > summary,[aria-expanded="false"],.formFieldGroupTitle:not(.formFieldGroupTitle_expanded)').length}),
     run: async (options={}) => {
       const started=Date.now(), attempted=new WeakSet();
       const normalize=value=>String(value||'').normalize('NFKC').replace(/\s+/g,' ').replace(/\s*\*\s*$/,'').trim();
@@ -49,36 +48,28 @@
         });
       }
       const relevant=()=>candidates().filter(needed);
-      const report={eligibleBefore:relevant().length,totalEligibleBefore:candidates().length,requestedTitleCount:allowed.length,mode:selective?'selected-target-groups':'all-target-groups',clicked:0,confirmedOpen:0,errors:0,remaining:0,limited:false};
-      if(!report.eligibleBefore){
-        report.unmatchedTitleCount=allowed.filter(name=>![...document.querySelectorAll('.formFieldGroupTitle')].some(el=>titleText(el)===name)).length;
-        report.unrelatedCollapsed=candidates().length;report.elapsedMs=Date.now()-started;
-        return report;
-      }
+      const outcome={clicked:0,remaining:0,limited:false};
+      if(!relevant().length)return outcome;
       // Several passes discover nested sections that mount after a parent opens.
       for(let pass=0;pass<8;pass++) {
         const pending=relevant().filter(el=>!attempted.has(el));
         if(!pending.length){await pause(250);if(!relevant().some(el=>!attempted.has(el)))break;continue;}
         for(const el of pending){
-          if(report.clicked>=100 || Date.now()-started>8000){report.limited=true;break;}
+          if(outcome.clicked>=100 || Date.now()-started>8000){outcome.limited=true;break;}
           attempted.add(el);
           // Recheck: opening a parent can change another candidate's state.
           if(!el.isConnected || !relevant().includes(el))continue;
           try {
-            el.click();report.clicked++;await pause(60);
-            if(el.matches?.('.formFieldGroupTitle') ? el.classList.contains('formFieldGroupTitle_expanded') : el.tagName==='SUMMARY' ? el.parentElement.open : el.getAttribute('aria-expanded')==='true')report.confirmedOpen++;
-          }catch{report.errors++;}
+            el.click();outcome.clicked++;await pause(60);
+          }catch{}
         }
-        if(report.limited)break;
+        if(outcome.limited)break;
         await pause(250);
       }
       await pause(350);
-      report.remaining=relevant().length;
-      report.unmatchedTitleCount=allowed.filter(name=>![...document.querySelectorAll('.formFieldGroupTitle')].some(el=>titleText(el)===name)).length;
-      report.unrelatedCollapsed=candidates().length-report.remaining;
-      if(report.remaining)report.limited=true;
-      report.elapsedMs=Date.now()-started;
-      return report;
+      outcome.remaining=relevant().length;
+      if(outcome.remaining)outcome.limited=true;
+      return outcome;
     }
   };
 })();

@@ -3,19 +3,6 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {JSDOM}=require('jsdom');
 const code=name=>fs.readFileSync(__dirname+'/../'+name,'utf8');
-test('single cell probe compares automatic/manual events without reading values and cleans up',async()=>{
- const w=page(tableFixture(['Колонка'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellField__focusTarget"><input class="cellRadioButton__input" value="PRIVATE_VALUE">';
- const fastTimer=w.setTimeout.bind(w);w.setTimeout=(fn,ms)=>ms>=180000?0:fastTimer(fn,ms);
- w.eval(code('cell-probe.js'));const input=w.document.querySelector('.cellRadioButton__input');let opens=0;
- input.onclick=()=>{opens++;};
- const start=w.pyrusCellProbe.start();assert.equal(start.phase,'select');input.click();assert.equal(opens,0);
- for(let i=0;i<14;i++)await new Promise(resolve=>w.setTimeout(resolve,10));
- assert.equal(opens,1);input.click();
- await Promise.resolve();const report=w.pyrusCellProbe.stop();
- assert.equal(report.finishedPhase,'manual');assert.ok(report.events.some(e=>e.phase==='automatic'));assert.ok(report.events.some(e=>e.phase==='manual'));
- assert.ok(!JSON.stringify(report).includes('PRIVATE_VALUE'));assert.equal(report.automatic.panelCount,0);
- const count=report.events.length;input.click();assert.equal(report.events.length,count);w.close();
-});
 test('table opener rebinds the input replaced during focus and uses mouse-down buttons',async()=>{
  const w=page(tableFixture(['Выбор'],[['']]));const cell=w.document.querySelector('td');cell.innerHTML='<input class="cellField__focusTarget"><input class="cellRadioButton__input">';
  let opened=0;const old=cell.querySelector('.cellRadioButton__input');
@@ -31,16 +18,11 @@ test('recorded table dropdown markup selects the exact text span without ARIA ro
  const [source]=w.pyrusTransfer.capture();source.value.rows=[['TCP']];
  const [result]=await w.pyrusTransfer.apply([source],[source.key],true);assert.equal(result.status,'dispatched');assert.equal(clicks,1);w.close();
 });
-test('table picker failure keeps its precise reason and picker status',async()=>{
+test('table picker failure keeps its precise reason and does not stop later fields',async()=>{
  const w=page(tableFixture(['Выбор'],[['']])+row('После','<input>'));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input">';
  const source=w.pyrusTransfer.capture();source[0].value.rows=[['Нет варианта']];source[1].value='Продолжить';
  const result=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
- assert.equal(result[0].reason,'choice-option-not-found');assert.equal(result[0].table.picker.outcome,'choice-option-not-found');assert.equal(result[1].status,'dispatched');w.close();
-});
-test('recorder tracks a manual table choice including double click without raw values',async()=>{
- const w=page(tableFixture(['Колонка'],[['']]));w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input" value="SECRET_CHOICE">';w.eval(code('catalog-recorder.js'));
- await w.pyrusCatalogRecorder.start('test-salt');w.document.querySelector('td input').dispatchEvent(new w.MouseEvent('dblclick',{bubbles:true}));
- const report=await w.pyrusCatalogRecorder.stop();assert.ok(report.events.some(e=>e.kind==='dblclick'));assert.ok(!JSON.stringify(report).includes('SECRET_CHOICE'));w.close();
+ assert.equal(result[0].reason,'choice-option-not-found');assert.equal(result[1].status,'dispatched');w.close();
 });
 test('target rows are materialized before deciding to add a row',async()=>{
  const w=page(tableFixture(['A']));const root=w.document.querySelector('.viewTableFieldNew');let added=0;
@@ -78,9 +60,51 @@ test('table identity ignores source row counters and surrounding title decoratio
  const html=extra=>'<div class="viewTableFieldNew"><div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__titleWrapper"><button class="formFieldGroupTitle"><div class="viewTableFieldNew__title"><label><span class="formFieldTitle__textValue">Общая таблица</span><span>*</span></label><span>'+extra+'</span></div></button></div><table><thead><tr><th class="headerCell">Колонка</th></tr></thead><tbody><tr class="viewTableRow"><td class="formCell"><div class="cellString__content" contenteditable="true">значение</div></td></tr></tbody></table></div></div>';
  const src=page(html(' (2) Подсказка источника')),target=page(html(' Подсказка черновика'));
  const source=await src.pyrusTransfer.captureTables();assert.equal(source[0].label,'Общая таблица');
- assert.equal(target.pyrusTransfer.preview(source,true)[0].matching.mode,'exact-key');src.close();target.close();
+ assert.equal(target.pyrusTransfer.preview(source,true)[0].reason,'');src.close();target.close();
 });
 const tableFixture=(columns,rows=[])=>'<div class="viewTableFieldNew"><div class="formFieldBaseWrapper"><div class="viewTableFieldNew__title">Тестовая таблица</div><table><thead><tr>'+columns.map(c=>'<th class="headerCell">'+c+'</th>').join('')+'</tr></thead><tbody>'+rows.map(values=>'<tr class="viewTableRow">'+values.map(v=>'<td class="formCell"><div class="cellString__content" contenteditable="true">'+v+'</div></td>').join('')+'</tr>').join('')+'</tbody></table><button class="addRowButton">+</button></div></div>';
+
+test('partly filled tables complete blank cells, map reordered columns and retain extra rows',async()=>{
+ const w=page(tableFixture(['А','Б'],[['Сохранить',''],['','  '],['Лишняя строка','Оставить']])+row('После','<input>'));
+ try{
+  const source=w.pyrusTransfer.capture();source[0].value={columns:['Б','А'],rows:[['Б1','А1'],['Б2','А2']]};source[1].value='Готово';
+  const before=JSON.stringify(source),writes=[];w.document.querySelectorAll('.cellString__content').forEach((el,i)=>el.addEventListener('input',()=>writes.push(i)));
+  const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+  assert.deepEqual([...w.document.querySelectorAll('td')].map(el=>el.textContent),['Сохранить','Б1','А2','Б2','Лишняя строка','Оставить']);
+  assert.deepEqual(writes.sort(),[1,2,3]);assert.equal(results[0].status,'partial');assert.equal(results[0].reason,'existing-values-preserved');assert.equal(results[1].status,'dispatched');assert.equal(JSON.stringify(source),before);
+ }finally{w.close();}
+});
+
+test('blank cells in an existing row do not prevent adding and filling further source rows',async()=>{
+ const w=page(tableFixture(['А','Б'],[['Оставить','']]));try{
+  w.document.querySelector('.addRowButton').onclick=()=>w.document.querySelector('tbody').insertAdjacentHTML('beforeend','<tr><td><div class="cellString__content" contenteditable="true"></div></td><td><div class="cellString__content" contenteditable="true"></div></td></tr>');
+  const [source]=w.pyrusTransfer.capture();source.value.rows=[['А1','Б1'],['А2','Б2']];
+  const [result]=await w.pyrusTransfer.apply([source],[source.key],false);
+  assert.equal(result.status,'partial');assert.deepEqual([...w.document.querySelectorAll('td')].map(el=>el.textContent),['Оставить','Б1','А2','Б2']);
+ }finally{w.close();}
+});
+
+test('overwrite still replaces occupied cells and refuses deleting extra target rows',async()=>{
+ for(const extra of [false,true]){
+  const w=page(tableFixture(['А','Б'],[['Старое',''],...(extra?[['Лишнее','Оставить']]:[])]));try{
+   const [source]=w.pyrusTransfer.capture();source.value.rows=[['Новое','Заполнить']];
+   const [result]=await w.pyrusTransfer.apply([source],[source.key],true);
+   assert.equal(result.status,extra?'error':'dispatched');
+   if(extra){assert.equal(result.reason,'table-extra-target-rows');assert.equal(w.document.querySelector('td').textContent,'Старое');}
+   else assert.deepEqual([...w.document.querySelectorAll('td')].map(el=>el.textContent),['Новое','Заполнить']);
+  }finally{w.close();}
+ }
+});
+
+test('partial form fills whitespace-only text and empty controls without touching populated fields',async()=>{
+ const w=page(row('Сохранить','<input value="Введено">')+row('Пробелы','<input value="   ">')+row('Описание','<div class="multiLineInputContent" contenteditable="true">\n  </div>')+row('Пустое','<input>'));
+ try{
+  const source=w.pyrusTransfer.capture().map(f=>({...f,value:'Источник '+f.label})),before=JSON.stringify(source);
+  const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+  assert.equal(w.document.querySelector('input').value,'Введено');assert.equal(results[0].status,'skipped');assert.ok(results.slice(1).every(result=>result.status==='dispatched'));
+  assert.equal(w.document.querySelectorAll('input')[1].value,'Источник Пробелы');assert.equal(w.document.querySelector('.multiLineInputContent').textContent,'Источник Описание');assert.equal(w.document.querySelectorAll('input')[2].value,'Источник Пустое');assert.equal(JSON.stringify(source),before);
+ }finally{w.close();}
+});
 test('table choice uses real option selection and confirms the cell',async()=>{
  const w=page(tableFixture(['Действие'],[['']])+'<div id="table-options" role="listbox"><div role="option">Добавить</div></div>');
  w.document.querySelector('td').innerHTML='<input class="cellRadioButton__input" aria-controls="table-options">';
@@ -138,9 +162,9 @@ test('target table is materialized before unsupported and overwrite checks',asyn
   try{
    const [preview]=w.pyrusTransfer.preview(source,false);assert.equal(preview.deferred,true);
    const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);
-   assert.equal(result.status,existing?'skipped':'dispatched',JSON.stringify(result));
+   assert.equal(result.status,existing?'partial':'dispatched',JSON.stringify(result));
    assert.equal(w.document.querySelector('.cellString__content')?.textContent,existing||'Новое значение');
-   if(existing)assert.equal(result.reason,'В целевой задаче уже заполнено');
+   if(existing)assert.equal(result.reason,'existing-values-preserved');
   }finally{w.close();}
  }
 });
@@ -202,7 +226,7 @@ test('selected fields still share ambiguity checks with unselected source fields
  const source=['A','B'].map(group=>({key:'label:'+group+' / Имя:text',label:'Имя',groups:[group],kind:'text',value:group}));
  try{
   const [result]=await w.pyrusTransfer.apply(source,[source[0].key],true);
-  assert.equal(result.status,'skipped');assert.equal(result.matching.mode,'ambiguous');assert.equal(w.document.querySelector('input').value,'');
+  assert.equal(result.status,'skipped');assert.match(result.reason,/Неоднозначное/);assert.equal(w.document.querySelector('input').value,'');
  }finally{w.close();}
 });
 
@@ -231,18 +255,6 @@ test('omitted controllers are checked again after each preceding selected write'
  }finally{w.close();}
 });
 
-test('table errors retain the failing cell structure after earlier successful cells',async()=>{
- const w=page(tableFixture(['A','B'],[['','']]));
- w.document.querySelectorAll('td')[1].innerHTML='<input class="unsupportedEditor" aria-autocomplete="list">';
- const source=w.pyrusTransfer.capture();source[0].value.rows=[['PRIVATE_TEXT','PRIVATE_CHOICE']];
- try{
-  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);
-  assert.equal(result.reason,'table-editor-unsupported');assert.equal(result.table.confirmedCells,1);
-  assert.equal(result.table.rowIndex,0);assert.equal(result.table.columnIndex,1);
-  assert.ok(result.table.context.some(n=>n.classes.includes('unsupportedEditor')));
-  assert.ok(!JSON.stringify(result.table).includes('PRIVATE_'));
- }finally{w.close();}
-});
 
 test('live row lookup ignores hidden rows when writing and verifying a table',async()=>{
  const w=page(tableFixture(['A','B'],[['',''],['','']]));
@@ -265,15 +277,6 @@ test('new picker is distinguished from a stale portal and dismissed after select
  const [result]=await w.pyrusTransfer.apply(source,['choice'],true);
  assert.equal(result.status,'dispatched');assert.equal(staleClicks,0);assert.equal(escapes,1);w.close();
 });
-test('table discovery includes sibling read-only rows and deeply nested cells without data',()=>{
- const w=page('<div class="viewTableFieldNew"><table><tbody></tbody></table></div><div class="readOnlyTableLayer"><div role="row"><div role="cell" class="readOnlyCell">SECRET_CELL</div></div></div><div class="viewTableFieldNew">'+'<div>'.repeat(22)+'<table><tbody><tr><td>SECRET_DEEP</td></tr></tbody></table>'+'</div>'.repeat(22)+'</div>');
- w.eval(code('structure.js'));const report=w.pyrusStructure();
- const outside=report.main.tableDiscovery.samples.find(s=>s.element.classes.includes('readOnlyCell'));
- assert.ok(outside);assert.equal(outside.knownTableRef,null);assert.ok(outside.ancestors.some(a=>a.classes.includes('readOnlyTableLayer')));
- assert.equal(report.main.components.tables.items[1].truncated,false);
- assert.ok(JSON.stringify(report.main.components.tables.items[1]).includes('TD'));
- assert.ok(!JSON.stringify(report).includes('SECRET'));w.close();
-});
 test('copies multi-choice tokens individually and continues to dependent fields',async()=>{
  const token=v=>'<span class="multiInputToken"><span class="token__text">'+v+'</span><span class="token__cross">x</span></span>';
  const html=selected=>row('Методы','<div class="formFieldRadio__content"><div class="horizontalMultiInput">'+selected.map(token).join('')+'<input role="combobox" aria-controls="choices"></div></div>');
@@ -290,17 +293,7 @@ test('multi-choice does not silently delete extra selections or match a scalar p
  const w=page(row('Методы','<div class="formFieldRadio__content"><div class="horizontalMultiInput"><span class="multiInputToken"><span class="token__text">DELETE</span></span><input role="combobox"></div></div>'));
  const source=[{key:'methods',label:'Методы',kind:'pyrus-multi-choice',value:['GET']}];
  assert.match(w.pyrusTransfer.preview(source,true)[0].reason,/лишние/);
- source[0].kind='pyrus-choice';source[0].value='GET';assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');w.close();
-});
-test('dedicated table and multi-value structures survive general sample truncation',()=>{
- const w=page('<input>'.repeat(160)+'<div class="viewTableFieldNew"><button>PRIVATE_ADD</button><table><tbody><tr><td class="formCell"><div class="cellString__content" contenteditable="true">PRIVATE_CELL</div></td></tr></tbody></table></div><div class="horizontalMultiInput"><div class="tokens"><span class="selectedToken">PRIVATE_CHOICE</span></div><input value="PRIVATE_QUERY"></div>');
- w.eval(code('structure.js'));const report=w.pyrusStructure();
- assert.equal(report.main.truncated,true);
- assert.equal(report.main.components.tables.items.length,1);
- assert.equal(report.main.components.multiValue.items.length,1);
- const json=JSON.stringify(report.main.components);
- assert.ok(json.includes('cellString__content'));assert.ok(json.includes('selectedToken'));assert.ok(!json.includes('PRIVATE_'));
- assert.ok(report.main.components.tables.items.every(item=>!item.truncated));w.close();
+ source[0].kind='pyrus-choice';source[0].value='GET';assert.equal(w.pyrusTransfer.preview(source,true)[0].deferred,true);w.close();
 });
 test('missing catalog does not block information system or its dependent field',async()=>{
  const w=page(row('Информационная система','<div class="formFieldCatalog__content"><input role="combobox" aria-owns="systems"></div>')+'<table id="systems"><tbody><tr><td>Система А</td></tr></tbody></table>');
@@ -325,13 +318,6 @@ test('later omitted ambiguous catalog does not block an earlier employee',async(
  const result=await w.pyrusTransfer.apply(source,['person','reason'],true);
  assert.equal(result[0].status,'dispatched');assert.equal(input.value,'Иван Тестовый');
  assert.equal(result[1].reason,'unselected-controller');assert.equal(result[1].controllerIndex,1);assert.equal(result[1].sourceIndex,2);w.close();
-});
-test('comparison diagnostics explain ambiguous and hidden fields without private text',()=>{
- const w=page(row('SECRET_LABEL','<input value="SECRET_VALUE">')+row('SECRET_LABEL','<input>')+'<div style="display:none">'+row('SECRET_HIDDEN','<input>')+'</div>');
- const source=[{key:'SECRET_ID',label:'SECRET_LABEL',kind:'text',value:'SECRET_VALUE',groups:[]},{key:'hidden',label:'SECRET_HIDDEN',kind:'text',value:'HIDDEN_VALUE'}];
- const report=w.pyrusTransfer.diagnose(source);
- assert.equal(report.comparison[0].candidates.length,2);assert.equal(report.comparison[0].candidates[0].sameValue,true);
- assert.equal(report.comparison[1].hiddenTitleNodes,1);assert.ok(!JSON.stringify(report).includes('SECRET'));assert.ok(!JSON.stringify(report).includes('HIDDEN_VALUE'));w.close();
 });
 test('captures actual Pyrus group containers and opens only the selected field group',async()=>{
  const group=(name,content)=>'<div class="formFieldGroup"><div class="formFieldBaseWrapper"><button class="formFieldGroupTitle">'+name+'</button></div><div class="body">'+content+'</div></div>';
@@ -363,7 +349,7 @@ test('Pyrus opens groups but does not open comboboxes as sections',async()=>{
  const w=page('<div class="formField"><div class="formFieldBaseWrapper"><div class="formFieldGroupTitle">Раздел</div><div id="child" style="display:none">'+row('Текст','<div contenteditable="true" class="multiLineInputContent">abc</div>')+'</div></div></div>'+row('Каталог','<input role="combobox" aria-expanded="false" aria-controls="list"><div id="list" role="listbox"></div>'));
  const title=w.document.querySelector('.formFieldGroupTitle');title.onclick=()=>{title.classList.add('formFieldGroupTitle_expanded');w.document.getElementById('child').style.display='';};
  let comboClicks=0;w.document.querySelector('[role=combobox]').onclick=()=>comboClicks++;
- const report=await w.pyrusExpand.run();assert.equal(report.clicked,1);assert.equal(report.confirmedOpen,1);assert.equal(comboClicks,0);
+ const report=await w.pyrusExpand.run();assert.equal(report.clicked,1);assert.ok(title.classList.contains('formFieldGroupTitle_expanded'));assert.equal(comboClicks,0);
  assert.ok(w.pyrusTransfer.capture().some(f=>f.key==='label:Раздел / Текст:pyrus-text'));w.close();
 });
 test('Pyrus fills exact single choice first, then reveals and fills dependent contenteditable',async()=>{
@@ -396,14 +382,13 @@ test('single catalog selects the exact table row, then fills dependent content',
  const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
  assert.ok(results.every(r=>r.status==='dispatched'),JSON.stringify(results));assert.deepEqual(sequence,['catalog-selected','child-filled']);w.close();
 });
-test('ambiguous catalog blocks later writes and retains structural failure snapshot without values',async()=>{
+test('ambiguous catalog blocks later writes and restores the original picker value',async()=>{
  const w=page(row('Система','<div class="formFieldCatalog__content"><input role="combobox" aria-owns="catalogRows" value="Старое"></div>')+row('Текст','<div contenteditable="true" class="multiLineInputContent">Не менять</div>')+'<table id="catalogRows"><tbody><tr><td>Система А</td><td>1</td></tr><tr><td>Система А</td><td>2</td></tr></tbody></table>');
- w.eval(code('structure.js'));
  const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Система А'},{key:'label:Текст:pyrus-text',label:'Текст',kind:'pyrus-text',value:'SECRET_VALUE'}];
  const result=await w.pyrusTransfer.apply(source,source.map(f=>f.key),true);
  assert.equal(result[0].reason,'choice-ambiguous');assert.equal(result[1].status,'blocked');
  assert.equal(w.document.querySelector('.multiLineInputContent').textContent,'Не менять');
- assert.ok(w.pyrusPickerFailureStructure);assert.ok(!JSON.stringify(w.pyrusPickerFailureStructure).includes('SECRET_VALUE'));w.close();
+ assert.equal(w.document.querySelector('input').value,'Старое');w.close();
 });
 test('omitting a differing catalog does not silently fill dependent fields',async()=>{
  const w=page(row('Система','<div class="formFieldCatalog__content"><input role="combobox" value="Другая"></div>')+row('Текст','<div contenteditable="true" class="multiLineInputContent">Старое</div>'));
@@ -414,18 +399,17 @@ test('omitting a differing catalog does not silently fill dependent fields',asyn
 test('source titles restrict target expansion',async()=>{
  const w=page('<div class="formField"><div class="formFieldGroupTitle">Нужная</div><div class="formFieldGroupTitle">Лишняя</div></div>');
  const titles=[...w.document.querySelectorAll('.formFieldGroupTitle')];titles.forEach(t=>t.onclick=()=>t.classList.add('formFieldGroupTitle_expanded'));
- const report=await w.pyrusExpand.run({groupTitles:['Нужная']});assert.equal(report.mode,'selected-target-groups');assert.equal(report.eligibleBefore,1);assert.ok(titles[0].classList.contains('formFieldGroupTitle_expanded'));assert.ok(!titles[1].classList.contains('formFieldGroupTitle_expanded'));w.close();
+ const report=await w.pyrusExpand.run({groupTitles:['Нужная']});assert.equal(report.clicked,1);assert.ok(titles[0].classList.contains('formFieldGroupTitle_expanded'));assert.ok(!titles[1].classList.contains('formFieldGroupTitle_expanded'));w.close();
 });
 test('draft sibling group with unknown contents stays closed for unrelated source titles',async()=>{
  const w=page('<div class="formView formView_newForm"><div class="formFieldGroup"><div class="formFieldBaseWrapper"><div class="formFieldBaseWrapper__content formFieldGroup__contentWrapper"><div class="formFieldBaseWrapper__titleWrapper"><button type="button" class="formFieldGroupTitle"><label class="formFieldTitle">Раздел черновика</label></button></div></div></div></div></div>');
  const title=w.document.querySelector('button');
  title.onclick=()=>{title.classList.add('formFieldGroupTitle_expanded');w.document.querySelector('.formView').insertAdjacentHTML('beforeend',row('Система','<div class="formFieldCatalog__content"><input role="combobox"></div>'));};
  const source=[{key:'source-catalog',label:'Система',kind:'pyrus-catalog',value:'Система А',groups:[]}];
- assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');
+ assert.equal(w.pyrusTransfer.preview(source,true)[0].deferred,true);
  const report=await w.pyrusExpand.run({groupTitles:['Иная секция','Другая секция']});
- assert.equal(report.confirmedOpen,0);assert.equal(report.remaining,0);
- assert.equal(report.unmatchedTitleCount,2);
- assert.equal(w.pyrusTransfer.preview(source,true)[0].matching.mode,'missing');
+ assert.equal(report.clicked,0);assert.equal(report.remaining,0);assert.ok(!title.classList.contains('formFieldGroupTitle_expanded'));
+ assert.equal(w.pyrusTransfer.preview(source,true)[0].deferred,true);
  await w.pyrusExpand.run({groupTitles:['Иная секция']});assert.equal(w.document.querySelectorAll('input').length,0);w.close();
 });
 test('popup capture reads source without expanding any sections',async()=>{
@@ -437,33 +421,8 @@ test('popup capture reads source without expanding any sections',async()=>{
    return [{result:await source.eval('('+opts.func.toString()+')')(...opts.args)}];
  }}};
  await ui.eval(code('popup.js'));await ui.document.getElementById('capture').onclick();
- assert.equal(clicks,0);assert.equal(saved.snapshot.fields.length,1);assert.equal(saved.lastPage.expansion,null);
+ assert.equal(clicks,0);assert.equal(saved.snapshot.fields.length,1);
  assert.ok(!source.document.querySelector('.formFieldGroupTitle').classList.contains('formFieldGroupTitle_expanded'));source.close();ui.close();
-});
-test('catalog recorder captures manual choice and compares values without exposing them',async()=>{
- const w=page(row('SECRET_LABEL','<div class="formFieldCatalog__content"><input role="combobox" value="SECRET_VALUE" placeholder="SECRET_PLACEHOLDER" data-record-id="SECRET_ID"></div>')+'<table><tbody><tr><td>SECRET_VALUE</td><td>SECRET_COLUMN</td></tr></tbody></table>');
- Object.defineProperty(w,'crypto',{value:require('node:crypto').webcrypto,configurable:true});w.TextEncoder=TextEncoder;
- w.eval(code('catalog-recorder.js'));
- const before=w.document.body.innerHTML;
- await w.pyrusCatalogRecorder.start('SALT_NOT_FOR_EXPORT');
- assert.equal(w.document.body.innerHTML,before);
- const input=w.document.querySelector('input');input.focus();input.click();
- const cell=w.document.querySelector('td');cell.click();input.blur();
- w.eval(code('catalog-recorder.js'));assert.equal(w.pyrusCatalogRecorder.status().running,true);
- const report=await w.pyrusCatalogRecorder.stop(),json=JSON.stringify(report);
- assert.ok(report.events.length>0);assert.ok(!json.includes('SECRET'));assert.ok(!json.includes('SALT_NOT_FOR_EXPORT'));
- const inputToken=report.events.flatMap(e=>e.nodes).find(n=>n.tag==='INPUT'&&n.signatures.value)?.signatures.value.token;
- const cellToken=report.events.flatMap(e=>e.nodes).find(n=>n.tag==='TD'&&n.signatures.text.length===12)?.signatures.text.token;
- assert.ok(inputToken);assert.equal(inputToken,cellToken);
- const count=report.events.length;input.click();assert.equal(w.pyrusCatalogRecorder.status().eventCount,count);
- await w.pyrusCatalogRecorder.discard();assert.equal((await w.pyrusCatalogRecorder.stop()).events.length,0);w.close();
-});
-test('catalog recorder ignores password values even inside a catalog wrapper',async()=>{
- const w=page(row('Справочник','<div class="formFieldCatalog__content"><input type="password" value="SECRET_PASSWORD"></div>'));
- w.eval(code('catalog-recorder.js'));await w.pyrusCatalogRecorder.start('salt');w.document.querySelector('input').click();
- const report=await w.pyrusCatalogRecorder.stop();
- const entry=report.events.flatMap(e=>e.nodes).find(n=>n.tag==='INPUT');
- assert.deepEqual(Object.keys(entry.signatures),[]);assert.deepEqual(Object.keys(entry.attributeSignatures),[]);w.close();
 });
 test('recorded Pyrus portal without ARIA linkage selects formatted catalog value by cell pointer events',async()=>{
  const w=page(row('Система','<div class="formFieldCatalog__content"><div class="formFieldInputCompletion"><input role="combobox" aria-owns="missing-owned-node"><span class="formFieldInputCompletion__dropdownIconWrapper"></span></div></div>')+row('Текст','<div contenteditable="true" class="multiLineInputContent"></div>')+'<div class="inputCompletion__popup" style="display:none"><div class="inputCompletion__popupContent"><table><tbody><tr class="completionTableMenuItem"><td>Сервис [А]</td><td>prod</td></tr></tbody></table></div></div>');
@@ -499,7 +458,7 @@ test('unique label bridges different group paths and generic draft pickers: pers
  };
  w.document.querySelector('#catalog td').onclick=()=>{order.push('catalog');inputs[1].value='Система А';inputs[1].parentElement.classList.add('formFieldCatalog__mainContent');w.document.getElementById('catalog').style.display='none';w.document.getElementById('dependent').style.display='';};
  const source=[{label:'Сотрудник',kind:'pyrus-person',value:'Тестовый сотрудник'},{label:'Система',kind:'pyrus-catalog',value:'Система А'},{label:'Причина',kind:'pyrus-text',value:'Тест'}].map(f=>({...f,groups:['Секция источника'],key:'label:Секция источника / '+f.label+':'+f.kind}));
- const first=w.pyrusTransfer.preview(source,false)[0];assert.equal(first.matching.mode,'unique-label');assert.equal(first.matching.targetKind,'pyrus-choice');
+ const first=w.pyrusTransfer.preview(source,false)[0];assert.equal(first.reason,'');
  const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
  assert.ok(results.every(r=>r.status==='dispatched'),JSON.stringify(results));assert.deepEqual(order,['person','catalog']);
  assert.equal(w.document.querySelector('.multiLineInputContent').textContent,'Тест');assert.equal(w.pyrusTransfer.capture()[0].kind,'pyrus-person');w.close();
@@ -507,10 +466,10 @@ test('unique label bridges different group paths and generic draft pickers: pers
 test('fallback matching refuses competing source names and conflicting field IDs',()=>{
  const w=page(row('Имя','<input>'));
  const source=[{key:'label:A/Имя:text',label:'Имя',kind:'text',value:'a'},{key:'label:B/Имя:text',label:'Имя',kind:'text',value:'b'}];
- const result=w.pyrusTransfer.preview(source,true);assert.ok(result.every(r=>r.matching.mode==='ambiguous'&&!r.deferred));
+ const result=w.pyrusTransfer.preview(source,true);assert.ok(result.every(r=>/Неоднозначное/.test(r.reason)&&!r.deferred));
  w.document.querySelector('.formFieldBaseWrapper').setAttribute('data-field-id','target-id');
  const [conflict]=w.pyrusTransfer.preview([{key:'field:source-id:text',fieldId:'source-id',label:'Имя',kind:'text',value:'x'}],true);
- assert.equal(conflict.matching.mode,'missing');w.close();
+ assert.equal(conflict.deferred,true);w.close();
 });
 test('Pyrus uses only title text and leaves required markers and tooltips out of matching',()=>{
  const html=row('ignore','<input>');const w=page(html);
@@ -523,7 +482,7 @@ test('empty source group metadata opens target sections and exposes the missing 
  const input=w.document.querySelector('input');w.document.querySelector('#catalog td').onclick=()=>{input.value='Тестовая система';w.document.getElementById('catalog').style.display='none';};
  const source=[{key:'label:Система:pyrus-catalog',label:'Система',kind:'pyrus-catalog',value:'Тестовая система',groups:[]}];
  assert.equal(w.pyrusTransfer.preview(source,false)[0].deferred,true);
- const report=await w.pyrusExpand.run({groupTitles:[],fields:source});assert.equal(report.clicked,1);assert.equal(report.mode,'selected-target-groups');assert.equal(report.requestedTitleCount,0);
+ const report=await w.pyrusExpand.run({groupTitles:[],fields:source});assert.equal(report.clicked,1);assert.ok(title.classList.contains('formFieldGroupTitle_expanded'));
  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);assert.equal(result.status,'dispatched');w.close();
 });
 test('captures expanded titles independently of fields and leaves collapsed source sections alone',()=>{

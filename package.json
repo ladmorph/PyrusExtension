@@ -1,7 +1,11 @@
 {
   "name": "pyrus-form-transfer",
-  "version": "0.9.11",
+  "version": "0.10.0",
   "private": true,
-  "scripts": {"test": "node --test replacement.test.cjs adapter.test.cjs expander.test.cjs popup.test.cjs sequential.test.cjs structure.test.cjs form-handlers.test.cjs tests/pyrus-dom.test.cjs"},
-  "devDependencies": {"jsdom": "30.1.3"}
+  "scripts": {
+    "test": "node --test replacement.test.cjs adapter.test.cjs expander.test.cjs popup.test.cjs prefill.test.cjs sequential.test.cjs tests/pyrus-dom.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "30.1.3"
+  }
 }
