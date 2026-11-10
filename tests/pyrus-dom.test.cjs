@@ -179,6 +179,82 @@ test('table preparation failure does not block later fields or expose error deta
   assert.equal(w.document.querySelector('input').value,'Продолжить');assert.ok(!JSON.stringify(results).includes('PRIVATE_RENDER_DETAILS'));
  }finally{w.close();}
 });
+
+test('scalar writes do not reread unrelated tables for every field',async()=>{
+ async function transfer(count){
+  const w=page(Array.from({length:count},(_,i)=>row('Поле '+i,'<input>')).join('')+tableFixture(['A'],[['Сохранить таблицу']]));
+  try{
+   const source=w.pyrusTransfer.capture().map(f=>({...f,value:f.kind==='pyrus-table'?f.value:'Новое'}));
+   const keys=source.filter(f=>f.kind!=='pyrus-table').map(f=>f.key),read=w.pyrusTables.data;let reads=0;
+   w.pyrusTables.data=(...args)=>{reads++;return read(...args);};
+   const results=await w.pyrusTransfer.apply(source,keys,false);
+   assert.ok(results.every(r=>r.status==='dispatched'),JSON.stringify(results));
+   assert.equal(w.document.querySelector('.cellString__content').textContent,'Сохранить таблицу');
+   return reads;
+  }finally{w.close();}
+ }
+ const small=await transfer(2),large=await transfer(12);
+ assert.ok(large<=small+2,`Unrelated table reads grew with scalar fields: ${small} -> ${large}`);
+});
+
+test('selected fields still share ambiguity checks with unselected source fields',async()=>{
+ const w=page(row('Имя','<input>'));
+ const source=['A','B'].map(group=>({key:'label:'+group+' / Имя:text',label:'Имя',groups:[group],kind:'text',value:group}));
+ try{
+  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],true);
+  assert.equal(result.status,'skipped');assert.equal(result.matching.mode,'ambiguous');assert.equal(w.document.querySelector('input').value,'');
+ }finally{w.close();}
+});
+
+test('matching is refreshed after an asynchronous remount and protects the new editor value',async()=>{
+ for(const existing of ['', 'Защищённое значение']){
+  const w=page(row('Первое','<input>')+row('Второе','<input>'));
+  const source=w.pyrusTransfer.capture().map((f,i)=>({...f,value:i?'Второе значение':'Первое значение'}));
+  const [first,old]=w.document.querySelectorAll('input');let fresh;
+  first.onchange=()=>w.setTimeout(()=>{fresh=old.cloneNode();fresh.value=existing;old.replaceWith(fresh);},100);
+  try{
+   const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+   assert.equal(results[0].status,'dispatched');assert.equal(results[1].status,existing?'skipped':'dispatched');
+   assert.equal(fresh.value,existing||'Второе значение');assert.equal(old.value,'');assert.equal(old.isConnected,false);
+  }finally{w.close();}
+ }
+});
+
+test('omitted controllers are checked again after each preceding selected write',async()=>{
+ const w=page(row('Первое','<input>')+row('Управляющее','<input role="combobox" value="Совпадает">')+row('Второе','<input>'));
+ const source=w.pyrusTransfer.capture().map(f=>({...f,value:f.kind==='pyrus-choice'?f.value:'Новое'}));
+ const [first,controller,last]=w.document.querySelectorAll('input');first.onchange=()=>{controller.value='Изменилось';};
+ try{
+  const results=await w.pyrusTransfer.apply(source,[source[0].key,source[2].key],false);
+  assert.equal(results[0].status,'dispatched');assert.equal(results[1].reason,'unselected-controller');
+  assert.equal(results[1].controllerIndex,1);assert.equal(results[1].sourceIndex,2);assert.equal(last.value,'');
+ }finally{w.close();}
+});
+
+test('table errors retain the failing cell structure after earlier successful cells',async()=>{
+ const w=page(tableFixture(['A','B'],[['','']]));
+ w.document.querySelectorAll('td')[1].innerHTML='<input class="unsupportedEditor" aria-autocomplete="list">';
+ const source=w.pyrusTransfer.capture();source[0].value.rows=[['PRIVATE_TEXT','PRIVATE_CHOICE']];
+ try{
+  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);
+  assert.equal(result.reason,'table-editor-unsupported');assert.equal(result.table.confirmedCells,1);
+  assert.equal(result.table.rowIndex,0);assert.equal(result.table.columnIndex,1);
+  assert.ok(result.table.context.some(n=>n.classes.includes('unsupportedEditor')));
+  assert.ok(!JSON.stringify(result.table).includes('PRIVATE_'));
+ }finally{w.close();}
+});
+
+test('live row lookup ignores hidden rows when writing and verifying a table',async()=>{
+ const w=page(tableFixture(['A','B'],[['',''],['','']]));
+ const hidden=w.document.querySelector('tbody tr').cloneNode(true);hidden.style.display='none';
+ hidden.querySelectorAll('.cellString__content').forEach(el=>el.textContent='Не изменять');w.document.querySelector('tbody').prepend(hidden);
+ const source=w.pyrusTransfer.capture();source[0].value.rows=[['А1','Б1'],['А2','Б2']];
+ try{
+  const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);
+  assert.equal(result.status,'dispatched');assert.deepEqual([...hidden.querySelectorAll('.cellString__content')].map(el=>el.textContent),['Не изменять','Не изменять']);
+  assert.deepEqual(JSON.parse(JSON.stringify(w.pyrusTransfer.capture()[0].value.rows)),[['А1','Б1'],['А2','Б2']]);
+ }finally{w.close();}
+});
 test('new picker is distinguished from a stale portal and dismissed after selection',async()=>{
  const w=page(row('Выбор','<input role="combobox">')+'<div class="inputCompletion__popup" id="stale"><div role="option">Нужное</div></div>');
  const input=w.document.querySelector('input');let staleClicks=0,escapes=0;

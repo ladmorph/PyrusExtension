@@ -49,13 +49,17 @@
     }).filter(f => f.key).map(f => ({...f, key: f.kind === 'radio' ? `${f.key}:${f.radioValue}` : f.key}));
     for(const root of globalThis.pyrusTables?.roots()||[]){
       const title=root.querySelector('.viewTableFieldNew__title .formFieldTitle__textValue') || root.querySelector('.viewTableFieldNew__title') || root.querySelector('.formFieldBaseWrapper__titleWrapper');
-      const label=normalize(title?.textContent),groups=groupPath(root),value=globalThis.pyrusTables.data(root);
-      if(label)fields.push({el:root,key:`table:${groups.join(' / ')} / ${label}`,label,groups,fieldId:'',kind:'pyrus-table',value,unsupported:!value.columns.length,radioValue:null});
+      const label=normalize(title?.textContent),groups=groupPath(root);
+      // Read table contents only when this inventory actually needs their value.
+      // The memo belongs to this inventory; never carry it across field writes.
+      let value;
+      const readValue=()=>value??=(globalThis.pyrusTables.data(root));
+      if(label)fields.push({el:root,key:`table:${groups.join(' / ')} / ${label}`,label,groups,fieldId:'',kind:'pyrus-table',get value(){return readValue();},get unsupported(){return !readValue().columns.length;},radioValue:null});
     }
     return globalThis.pyrusTables?fields.sort((a,b)=>a.el===b.el?0:a.el.compareDocumentPosition(b.el)&2?1:-1):fields;
   }
   const serial = f => { const {el, ...rest} = f; return rest; };
-  function plan(source, overwrite) {
+  function plan(source, overwrite, requestedKeys=null) {
     const targets = inventory();
     // Index this inventory only; never reuse DOM matches across field writes.
     const byKey=new Map(),byLabel=new Map(),byFieldId=new Map(),sourceKeyCounts=new Map();
@@ -75,7 +79,10 @@
     };
     const fallbackOwners=new Map();
     source.forEach((s,index)=>{if(!direct[index].length)for(const t of pool(s,index))add(fallbackOwners,t,index);});
+    // All source fields still participate in ownership/ambiguity checks, even
+    // when only one selected field needs a value and a reason right now.
     return source.map((s,index) => {
+      if(requestedKeys&&!requestedKeys.has(s.key))return null;
       const matches=direct[index].length?direct[index]:pool(s,index);
       const duplicates = sourceKeyCounts.get(s.key) > 1;
       const shared=matches.length===1&&!direct[index].length&&(fallbackOwners.get(matches[0])||[]).some(i=>i!==index);
@@ -97,7 +104,7 @@
       const deferred = Boolean(tablePending || (!target && !ambiguous && !s.unsupported && s.kind !== 'radio'));
       return { key:s.key, label:s.label, value:s.value, reason, deferred, target,
         matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:(byLabel.get(normalize(s.label))||[]).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
-    });
+    }).filter(Boolean);
   }
   const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
   function writeNative(el,value) {
@@ -209,9 +216,9 @@
       if(!tableChoice)writeNative(el,previous);closePicker();throw e;
     }
   }
-  async function setValue(field, value) {
+  async function setValue(field, value, preparedTable=false) {
     const el = field.el;
-    if(field.kind==='pyrus-table'){await globalThis.pyrusTables.apply(el,value,setValue);return;}
+    if(field.kind==='pyrus-table'){await globalThis.pyrusTables.apply(el,value,setValue,preparedTable);return;}
     if(field.kind==='pyrus-multi-choice'){
       const container=el.closest('.horizontalMultiInput');
       for(const item of value){
@@ -308,44 +315,49 @@
         quiet=setTimeout(finish,catalog?1000:300);deadline=setTimeout(finish,catalog?6000:1500);
       });
       // Source inventory is in document order, regardless of selection/search order in the popup.
-      const ordered = source.filter(f => keys.includes(f.key)).map(f => f.key);
+      const selectedKeys=new Set(keys),selectedFields=source.filter(f=>selectedKeys.has(f.key));
+      const ordered = selectedFields.map(f => f.key);
+      const sourceIndices=new Map();source.forEach((f,index)=>{if(!sourceIndices.has(f.key))sourceIndices.set(f.key,index);});
       const groupTitles=[...new Set([...expandedGroups,...source.flatMap(f=>f.groups || [])])];
       // A selected dependent field must not bypass an earlier differing picker.
-      const lastSelected=source.reduce((last,f,i)=>keys.includes(f.key)?i:last,-1);
-      const requiredPickers=source.slice(0,lastSelected+1).filter(f=>isPicker(f.kind) && valueText(f.value)!=='' && !keys.includes(f.key));
+      const lastSelected=source.reduce((last,f,i)=>selectedKeys.has(f.key)?i:last,-1);
+      const requiredPickers=source.slice(0,lastSelected+1).map((field,index)=>({field,index})).filter(({field})=>isPicker(field.kind) && valueText(field.value)!=='' && !selectedKeys.has(field.key));
       let blocked=false;
       for (const key of ordered) {
-        globalThis.pyrusProgress?.update({completed:result.length,total:ordered.length,stage:'Заполнение полей',label:source.find(f=>f.key===key)?.label||'Поле',detail:''});
+        const sourceIndex=sourceIndices.get(key),original=source[sourceIndex],fieldKeys=new Set([key]);
+        globalThis.pyrusProgress?.update({completed:result.length,total:ordered.length,stage:'Заполнение полей',label:original.label||'Поле',detail:''});
+        if(blocked){result.push({label:original.label || 'Поле',status:'blocked',reason:'blocked-by-picker',message:'Не заполнено: предыдущий справочник или список не удалось перенести. Исправьте его и повторите перенос.'});continue;}
         // Check only preceding controllers, after earlier selected fields have been filled.
-        const sourceIndex=source.findIndex(f=>f.key===key);
-        const controller=requiredPickers.find(f=>source.indexOf(f)<sourceIndex && (()=>{
-          const p=plan(source,overwrite).find(p=>p.key===f.key);
+        const precedingPickers=requiredPickers.filter(({index})=>index<sourceIndex);
+        const requestedKeys=new Set([key,...precedingPickers.map(({field})=>field.key)]);
+        const currentPlan=plan(source,overwrite,requestedKeys);
+        const controller=precedingPickers.find(({field})=>{
+          const p=currentPlan.find(p=>p.key===field.key);
           if(p?.matching.mode==='missing')return false;
-          return !p?.target || valueText(p.target.value)!==valueText(f.value);
-        })());
-        if(!blocked && controller){
-          result.push({label:source[sourceIndex].label,status:'blocked',reason:'unselected-controller',controllerIndex:source.indexOf(controller),message:'Не заполнено: предыдущее управляющее поле не выбрано для переноса и отличается от источника.'});blocked=true;continue;
+          return !p?.target || valueText(p.target.value)!==valueText(field.value);
+        });
+        if(controller){
+          result.push({label:original.label,status:'blocked',reason:'unselected-controller',controllerIndex:controller.index,message:'Не заполнено: предыдущее управляющее поле не выбрано для переноса и отличается от источника.'});blocked=true;continue;
         }
-        if(blocked){result.push({label:source.find(f=>f.key===key)?.label || 'Поле',status:'blocked',reason:'blocked-by-picker',message:'Не заполнено: предыдущий справочник или список не удалось перенести. Исправьте его и повторите перенос.'});continue;}
-        let p = plan(source, overwrite).find(p => p.key === key);
+        let p = currentPlan.find(p=>p.key===key),preparedRoot=null;
         // Conditional controls may mount asynchronously after an earlier input/change.
         if (p?.deferred&&!p.target) {
           for(let attempt=0;attempt<6 && p.deferred&&!p.target;attempt++) {
             await pause(250);
-            if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
-            p=plan(source,overwrite).find(p=>p.key===key);
+            if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:selectedFields});
+            p=plan(source,overwrite,fieldKeys).find(p=>p.key===key);
           }
         }
         // Load each matched table before checking its editors or protecting
         // existing values: neither can be decided from an unrendered table.
-        if(p?.target?.kind==='pyrus-table'&&!source[sourceIndex].unsupported&&source[sourceIndex].value?.rows?.length){
+        if(p?.target?.kind==='pyrus-table'&&!original.unsupported&&original.value?.rows?.length){
           globalThis.pyrusProgress?.update({detail:'Жду загрузки строк и столбцов таблицы…'});
-          try{await globalThis.pyrusTables.prepare(p.target.el);}
+          try{await globalThis.pyrusTables.prepare(p.target.el);preparedRoot=p.target.el;}
           catch{
             result.push({label:p.label,status:'error',reason:'table-prepare-failed',message:'Не удалось загрузить таблицу. Остальные поля продолжают заполняться.'});
             continue;
           }
-          p=plan(source,overwrite).find(p=>p.key===key);
+          p=plan(source,overwrite,fieldKeys).find(p=>p.key===key);
         }
         if (!p || p.reason) {
           if(!p || p.matching.mode==='missing'){
@@ -353,7 +365,6 @@
             continue;
           }
           result.push({label:p?.label || 'Поле',status:'skipped',reason:p?.reason || 'missing',message:p?.deferred&&p.matching.sourceKind!=='pyrus-table'?'Поле не появилось после заполнения предыдущих. Проверьте условие отображения.':p?.reason || 'Не найдено'});
-          const original=source.find(f=>f.key===key);
           if(isPicker(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;
           continue;
         }
@@ -361,10 +372,10 @@
           if(JSON.stringify(p.target.value)===JSON.stringify(p.value)){
             result.push({label:p.label,status:'dispatched',reason:'already-matched',message:'Значение уже совпадает с источником.'});continue;
           }
-          await setValue(p.target, p.value);
+          await setValue(p.target, p.value, preparedRoot===p.target.el);
           await waitForUpdate(p.target.kind==='pyrus-catalog');
-          if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
-          const resolved=plan(source,true).find(f=>f.key===key);
+          if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:selectedFields});
+          const resolved=plan(source,true,fieldKeys).find(f=>f.key===key);
           const accepted=Boolean(resolved?.target && !resolved.reason && resolved.matching.mode!=='ambiguous' && (p.target.kind==='pyrus-table'?globalThis.pyrusTables.verify(resolved.target.el,p.value):JSON.stringify(resolved.target.value)===JSON.stringify(p.value)));
           if(!accepted && isPicker(p.target.kind))blocked=true;
           result.push({label:p.label,status:accepted?'dispatched':'unverified',reason:accepted?'dom-value-matched':'dom-value-mismatch',message:accepted?'Значение передано. Проверьте сохранение в Pyrus.':'Значение не подтверждено в DOM. Проверьте поле вручную.'});
@@ -373,7 +384,7 @@
       }
       const finalPlan=plan(source,true);
       globalThis.pyrusProgress?.update({completed:ordered.length,total:ordered.length,stage:'Проверка результата',label:'',detail:''});
-      return result.map((entry,index)=>({...entry,sourceIndex:source.findIndex(f=>f.key===ordered[index]),matching:finalPlan.find(f=>f.key===ordered[index])?.matching||null}));
+      return result.map((entry,index)=>({...entry,sourceIndex:sourceIndices.get(ordered[index]),matching:finalPlan.find(f=>f.key===ordered[index])?.matching||null}));
     }
   };
 })();
