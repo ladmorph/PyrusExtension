@@ -111,6 +111,74 @@ test('capture materializes a source table without clicks and restores scroll pos
  root.scrollIntoView=()=>{w.document.documentElement.scrollTop=300;root.querySelector('tbody').innerHTML='<tr class="viewTableRow"><td class="formCell">Исходная строка</td></tr>';};
  const [source]=await w.pyrusTransfer.captureTables();assert.equal(source.value.rows[0][0],'Исходная строка');assert.equal(clicked,0);assert.equal(w.document.documentElement.scrollTop,0);w.close();
 });
+
+test('capture waits for delayed source rows instead of saving an empty table',async()=>{
+ const w=page(tableFixture(['A'])),root=w.document.querySelector('.viewTableFieldNew');
+ const header=root.querySelector('thead').innerHTML;root.querySelector('thead').replaceChildren();
+ const timer=w.setTimeout.bind(w);let scrolled=false,waits=0,clicks=0;
+ root.scrollIntoView=()=>{scrolled=true;};root.onclick=()=>clicks++;
+ w.setTimeout=(fn,ms)=>timer(()=>{
+  if(scrolled&&++waits===3){root.querySelector('thead').innerHTML=header;root.querySelector('tbody').innerHTML='<tr class="viewTableRow"><td class="formCell">Отложенная строка</td></tr>';}
+  fn();
+ },ms);
+ try{
+  const [source]=await w.pyrusTransfer.captureTables();
+  assert.deepEqual([...source.value.rows[0]||[]],['Отложенная строка']);assert.equal(source.unsupported,false);assert.equal(clicks,0);
+ }finally{w.close();}
+});
+
+test('target table is materialized before unsupported and overwrite checks',async()=>{
+ const src=page(tableFixture(['A'],[['Новое значение']]));
+ const source=await src.pyrusTransfer.captureTables();src.close();
+ for(const existing of ['', 'Существующее значение']){
+  const w=page(tableFixture(['A'],[[existing]])),root=w.document.querySelector('.viewTableFieldNew');
+  const header=root.querySelector('thead').innerHTML,body=root.querySelector('tbody').innerHTML;
+  root.querySelector('thead').replaceChildren();root.querySelector('tbody').replaceChildren();
+  root.scrollIntoView=()=>{root.querySelector('thead').innerHTML=header;root.querySelector('tbody').innerHTML=body;};
+  try{
+   const [preview]=w.pyrusTransfer.preview(source,false);assert.equal(preview.deferred,true);
+   const [result]=await w.pyrusTransfer.apply(source,[source[0].key],false);
+   assert.equal(result.status,existing?'skipped':'dispatched',JSON.stringify(result));
+   assert.equal(w.document.querySelector('.cellString__content')?.textContent,existing||'Новое значение');
+   if(existing)assert.equal(result.reason,'В целевой задаче уже заполнено');
+  }finally{w.close();}
+ }
+});
+
+test('empty source tables finish within the render limit without adding rows',async()=>{
+ const w=page(tableFixture(['A'])),timer=w.setTimeout.bind(w);let waits=0,clicks=0;
+ w.setTimeout=(fn,ms)=>{waits++;return timer(fn,ms);};w.document.querySelector('.addRowButton').onclick=()=>clicks++;
+ try{
+  const [source]=await w.pyrusTransfer.captureTables();
+  assert.equal(source.value.rows.length,0);assert.equal(clicks,0);assert.equal(waits,20);
+ }finally{w.close();}
+});
+
+test('later tables wait for rendering independently of earlier populated tables',async()=>{
+ const first=tableFixture(['A'],[['Первая']]).replace('Тестовая таблица','Первая таблица');
+ const second=tableFixture(['A']).replace('Тестовая таблица','Вторая таблица');
+ const w=page(first+second),root=w.document.querySelectorAll('.viewTableFieldNew')[1],timer=w.setTimeout.bind(w);
+ let scrolled=false,waits=0;root.scrollIntoView=()=>{scrolled=true;};
+ w.setTimeout=(fn,ms)=>timer(()=>{
+  if(scrolled&&++waits===3)root.querySelector('tbody').innerHTML='<tr class="viewTableRow"><td class="formCell">Вторая</td></tr>';
+  fn();
+ },ms);
+ try{
+  const source=await w.pyrusTransfer.captureTables();
+  assert.equal(source.length,2);assert.equal(source[0].value.rows[0][0],'Первая');assert.equal(source[1].value.rows[0][0],'Вторая');
+ }finally{w.close();}
+});
+
+test('table preparation failure does not block later fields or expose error details',async()=>{
+ const w=page(tableFixture(['A'],[['']])+row('После','<input>'));
+ const source=w.pyrusTransfer.capture();source[0].value.rows=[['Текст']];source[1].value='Продолжить';
+ w.document.querySelector('.viewTableFieldNew').scrollIntoView=()=>{throw Error('PRIVATE_RENDER_DETAILS');};
+ try{
+  const results=await w.pyrusTransfer.apply(source,source.map(f=>f.key),false);
+  assert.equal(results[0].reason,'table-prepare-failed');assert.equal(results[1].status,'dispatched');
+  assert.equal(w.document.querySelector('input').value,'Продолжить');assert.ok(!JSON.stringify(results).includes('PRIVATE_RENDER_DETAILS'));
+ }finally{w.close();}
+});
 test('new picker is distinguished from a stale portal and dismissed after selection',async()=>{
  const w=page(row('Выбор','<input role="combobox">')+'<div class="inputCompletion__popup" id="stale"><div role="option">Нужное</div></div>');
  const input=w.document.querySelector('input');let staleClicks=0,escapes=0;

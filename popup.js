@@ -72,7 +72,8 @@ action('capture',async()=>{
  reset();const result=await page('capture');
  if(!result.data.length)throw new Error('В открытых разделах поля не найдены. Включите редактирование. Скачайте отчёт — для этой разметки нужен адаптер.');
  snapshot={adapterVersion:'pyrus-dom-v3',url:result.url,time:Date.now(),fields:result.data,expandedGroups:result.sourceSections||[]};await storage.set({snapshot});await loadSource();
- status('Поля сохранены. Перейдите в другую задачу того же шаблона.');
+ const emptyTables=result.data.filter(f=>f.kind==='pyrus-table'&&!f.value?.rows?.length).length;
+ status('Поля сохранены. Перейдите в другую задачу того же шаблона.'+(emptyTables?'\nТаблиц без прочитанных строк: '+emptyTables+'. Если в них есть данные, дождитесь загрузки и сохраните поля заново.':''));
 });
 
 action('fillAll',async()=>{
@@ -111,7 +112,7 @@ action('preview',async()=>{
  for(const f of result.data){
  const label=document.createElement('label');label.className='field'+(f.reason&&!f.deferred?' blocked':'');
  const cb=document.createElement('input');cb.type='checkbox';cb.value=f.key;cb.disabled=Boolean(f.reason)&&!f.deferred;cb.checked=!cb.disabled;cb.onchange=selection;
- const detail=document.createElement('small');detail.textContent=f.deferred?'Ожидает появления после заполнения предыдущих полей':f.reason||'Значение: '+JSON.stringify(f.value).slice(0,180);
+ const detail=document.createElement('small');detail.textContent=f.deferred?(f.matching?.sourceKind==='pyrus-table'?'Таблица будет проверена после загрузки строк и столбцов':'Ожидает появления после заполнения предыдущих полей'):f.reason||'Значение: '+JSON.stringify(f.value).slice(0,180);
  label.append(cb,document.createTextNode(' '+f.label),detail);label.dataset.label=f.label.toLocaleLowerCase('ru');$('fields').append(label);
  }
  $('search').value='';$('review').hidden=false;

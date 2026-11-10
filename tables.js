@@ -26,6 +26,21 @@
     return norm(cell.textContent);
   }
   const data=root=>({columns:columns(root),rows:rows(root).map(row=>cells(row).map(read)).filter(row=>row.some(v=>v!==''&&v!==false))});
+  async function prepare(root,source=false){
+    root.scrollIntoView?.({block:'center',behavior:'instant'});
+    let previous='',stable=0,value;
+    // Scrolling starts asynchronous rendering. A single fixed delay can capture
+    // an empty source or mistake an unloaded target for an unsupported table.
+    for(let attempt=0;attempt<20;attempt++){
+      await pause(100);
+      value=data(root);
+      const renderedRows=rows(root).length,signature=JSON.stringify([value,renderedRows]);
+      stable=signature===previous?stable+1:0;previous=signature;
+      const ready=value.columns.length&&value.columns.every(Boolean)&&(source?value.rows.length&&value.rows.every(row=>row.length===value.columns.length):renderedRows);
+      if(ready&&stable>=3)break;
+    }
+    return value;
+  }
   function mapping(wanted,actual){
     if(!wanted.length||wanted.some(c=>!c)||new Set(wanted).size!==wanted.length||new Set(actual).size!==actual.length)throw Error('table-columns-ambiguous');
     const map=wanted.map(c=>actual.indexOf(c));
@@ -93,8 +108,7 @@
     const positions=[...new Set([document.scrollingElement,...document.querySelectorAll('*')])].filter(el=>el&&(el===document.scrollingElement||el.scrollHeight>el.clientHeight||el.scrollWidth>el.clientWidth||el.scrollTop||el.scrollLeft)).map(el=>[el,el.scrollTop,el.scrollLeft]);
     const captured=new Map();
     try{for(const root of roots()){
-      root.scrollIntoView?.({block:'center',behavior:'instant'});await pause(200);
-      captured.set(root,data(root));
+      captured.set(root,await prepare(root,true));
     }}finally{for(const [el,top,left] of positions){el.scrollTop=top;el.scrollLeft=left;}}
     return captured;
   }
@@ -111,5 +125,5 @@
         return {el,cell,root,r,c,rowCount:rows(root).length,columnNames:columns(root),kind,value,label:title+' · строка '+(r+1)+' · '+(columns(root)[c]||'столбец '+(c+1)),resolve:()=>cells(rows(root)[r]||{children:[]})[c]?.querySelector('.cellRadioButton__input')};
       }).filter(Boolean);
   }
-  globalThis.pyrusTables={roots,data,verify,apply,prepareCapture,replacementCells};
+  globalThis.pyrusTables={roots,data,prepare,verify,apply,prepareCapture,replacementCells};
 })();

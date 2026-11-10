@@ -92,7 +92,9 @@
       if(!reason && isPicker(target.kind) && s.value==='' && target.value!=='')reason='Очистка списка Pyrus пока не поддерживается';
       if(!reason && target.kind==='pyrus-multi-choice' && (!Array.isArray(s.value) || target.value.some(v=>!s.value.includes(v))))reason='В целевом множественном поле есть лишние варианты: автоматическое удаление пока не поддерживается';
       if(s.kind==='pyrus-table'&&!s.value?.rows?.length)reason='Строки таблицы источника не прочитаны или таблица пуста';
-      const deferred = !target && !ambiguous && !s.unsupported && s.kind !== 'radio';
+      const tablePending=target?.kind==='pyrus-table'&&!target.value.columns.length&&!s.unsupported&&s.value?.rows?.length>0;
+      if(tablePending)reason='Столбцы таблицы ещё не загружены';
+      const deferred = Boolean(tablePending || (!target && !ambiguous && !s.unsupported && s.kind !== 'radio'));
       return { key:s.key, label:s.label, value:s.value, reason, deferred, target,
         matching:{mode:ambiguous?'ambiguous':!target?'missing':direct[index].length?'exact-key':s.fieldId&&s.fieldId===rawTarget.fieldId?'field-id':'unique-label',sourceKind:s.kind,targetKind:rawTarget?.kind||null,candidates:matches.length,sameLabel:(byLabel.get(normalize(s.label))||[]).length,sourceLabelLength:normalize(s.label).length,sourceGroupDepth:(s.groups||[]).length,targetGroupDepth:(rawTarget?.groups||[]).length} };
     });
@@ -327,19 +329,30 @@
         if(blocked){result.push({label:source.find(f=>f.key===key)?.label || 'Поле',status:'blocked',reason:'blocked-by-picker',message:'Не заполнено: предыдущий справочник или список не удалось перенести. Исправьте его и повторите перенос.'});continue;}
         let p = plan(source, overwrite).find(p => p.key === key);
         // Conditional controls may mount asynchronously after an earlier input/change.
-        if (p?.deferred) {
-          for(let attempt=0;attempt<6 && p.deferred;attempt++) {
+        if (p?.deferred&&!p.target) {
+          for(let attempt=0;attempt<6 && p.deferred&&!p.target;attempt++) {
             await pause(250);
             if(globalThis.pyrusExpand)await globalThis.pyrusExpand.run({groupTitles,fields:source.filter(f=>keys.includes(f.key))});
             p=plan(source,overwrite).find(p=>p.key===key);
           }
+        }
+        // Load each matched table before checking its editors or protecting
+        // existing values: neither can be decided from an unrendered table.
+        if(p?.target?.kind==='pyrus-table'&&!source[sourceIndex].unsupported&&source[sourceIndex].value?.rows?.length){
+          globalThis.pyrusProgress?.update({detail:'Жду загрузки строк и столбцов таблицы…'});
+          try{await globalThis.pyrusTables.prepare(p.target.el);}
+          catch{
+            result.push({label:p.label,status:'error',reason:'table-prepare-failed',message:'Не удалось загрузить таблицу. Остальные поля продолжают заполняться.'});
+            continue;
+          }
+          p=plan(source,overwrite).find(p=>p.key===key);
         }
         if (!p || p.reason) {
           if(!p || p.matching.mode==='missing'){
             result.push({label:p?.label || source[sourceIndex].label,status:'skipped',reason:'missing',message:'Поле отсутствует в целевой форме. Пропущено, перенос продолжается.'});
             continue;
           }
-          result.push({label:p?.label || 'Поле',status:'skipped',reason:p?.reason || 'missing',message:p?.deferred?'Поле не появилось после заполнения предыдущих. Проверьте условие отображения.':p?.reason || 'Не найдено'});
+          result.push({label:p?.label || 'Поле',status:'skipped',reason:p?.reason || 'missing',message:p?.deferred&&p.matching.sourceKind!=='pyrus-table'?'Поле не появилось после заполнения предыдущих. Проверьте условие отображения.':p?.reason || 'Не найдено'});
           const original=source.find(f=>f.key===key);
           if(isPicker(original?.kind) && valueText(p?.target?.value)!==valueText(original.value))blocked=true;
           continue;
